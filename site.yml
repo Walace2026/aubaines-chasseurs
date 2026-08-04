@@ -1,0 +1,45 @@
+# Génère et publie le sous-site des aubaines chaque matin à 5 h 20 (heure de l'Est),
+# soit ~20 min après la reconstruction Make de 5 h. Publication sur GitHub Pages.
+
+name: Aubaines - generation quotidienne
+
+on:
+  schedule:
+    - cron: "20 9 * * *"    # 5 h 20 HAE = 9 h 20 UTC ; ajuster selon l'heure d'ete/hiver
+  workflow_dispatch:          # bouton pour lancer a la main
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  construire:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Installer les dependances
+        run: pip install requests
+      - name: Generer le site
+        run: python generer_site.py
+      - name: Preparer l'artefact Pages
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+
+  publier:
+    needs: construire
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4
