@@ -50,6 +50,15 @@ DOMAINE = "https://aubaines.chasseursdedealsqc.com"
 PAGE_FACEBOOK = "https://www.facebook.com/ChasseursDeDealsQc"
 SITE_PRINCIPAL = "https://www.chasseursdedealsqc.com"
 
+# Notifications push OneSignal (app « Chasseurs de Deals - Aubaines »).
+ONESIGNAL_APP_ID = "a5d68a4c-b078-4294-921f-53a46cbf1e7a"
+ONESIGNAL = (
+    '<script src="https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js" defer></script>'
+    '<script>window.OneSignalDeferred=window.OneSignalDeferred||[];'
+    'OneSignalDeferred.push(async function(OneSignal){await OneSignal.init({appId:"'
+    + ONESIGNAL_APP_ID + '"});});</script>'
+)
+
 NB_AUBAINES = 50          # nombre de pages à générer (les meilleurs rabais)
 FUSEAU = timezone(timedelta(hours=-4))  # heure de l'Est
 
@@ -178,6 +187,7 @@ def page_aubaine(a, maj_iso: str) -> str:
 <meta name="robots" content="index,follow,max-image-preview:large">
 <script type="application/ld+json">{jsonld}</script>
 <style>{CSS}</style>
+{ONESIGNAL}
 </head>
 <body>
 <header><a class="logo" href="/">🔥 Chasseurs de Deals Québec</a>
@@ -233,6 +243,7 @@ def page_index(aubaines, maj_iso, maj_lisible) -> str:
 <meta property="og:url" content="{e(DOMAINE)}/">
 <meta name="robots" content="index,follow,max-image-preview:large">
 <style>{CSS}</style>
+{ONESIGNAL}
 </head>
 <body>
 <header><a class="logo" href="/">🔥 Chasseurs de Deals Québec</a>
@@ -373,6 +384,10 @@ def main() -> int:
     (SORTIE / "llms.txt").write_text(llms_txt(aubaines, maj_lisible), encoding="utf-8")
     # Un domaine personnalisé sur GitHub Pages a besoin d'un fichier CNAME.
     (SORTIE / "CNAME").write_text("aubaines.chasseursdedealsqc.com\n", encoding="utf-8")
+    # Service worker OneSignal (doit être à la racine du site pour le push web).
+    (SORTIE / "OneSignalSDKWorker.js").write_text(
+        'importScripts("https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.sw.js");\n',
+        encoding="utf-8")
 
     for a in aubaines:
         (SORTIE / "aubaine" / f"{a['slug']}.html").write_text(
