@@ -5,8 +5,8 @@ name: Aubaines - generation quotidienne
 
 on:
   schedule:
-    - cron: "20 9 * * *"    # 5 h 20 HAE = 9 h 20 UTC ; ajuster selon l'heure d'ete/hiver
-  workflow_dispatch:          # bouton pour lancer a la main
+    - cron: "20 9 * * *"   # 5 h 20 HAE = 9 h 20 UTC ; ajuster selon l'heure d'ete/hiver
+  workflow_dispatch:        # bouton pour lancer a la main
 
 permissions:
   contents: read
@@ -29,6 +29,8 @@ jobs:
         run: pip install requests
       - name: Generer le site
         run: python generer_site.py
+        env:
+          ONESIGNAL_REST_API_KEY: ${{ secrets.ONESIGNAL_REST_API_KEY }}
       - name: Preparer l'artefact Pages
         uses: actions/upload-pages-artifact@v3
         with:
