@@ -51,6 +51,32 @@ DOMAINE = "https://aubaines.chasseursdedealsqc.com"
 PAGE_FACEBOOK = "https://www.facebook.com/ChasseursDeDealsQc"
 SITE_PRINCIPAL = "https://www.chasseursdedealsqc.com"
 
+# Infolettre : webhook Make qui ajoute l'abonné à la liste Brevo.
+INFOLETTRE_HOOK = "https://hook.us2.make.com/jc2sk18m25gcbykk8xf6fa7aokeudccy"
+
+
+def formulaire_infolettre(site: str, compact: bool = False) -> str:
+    """Bloc d'inscription à l'infolettre (POST url-encodé → webhook Make)."""
+    titre = "" if compact else (
+        '<h2>📬 L\'infolettre des aubaines</h2>'
+        '<p>Reçois chaque matin les meilleures aubaines du jour, directement '
+        'dans ta boîte courriel. Gratuit, désabonnement en un clic.</p>')
+    return (
+        '<section class="infolettre' + (' compacte' if compact else '') + '">'
+        + titre +
+        '<form class="inf-form" onsubmit="return _inf(this)">'
+        '<input type="email" name="email" required placeholder="Ton adresse courriel">'
+        '<button type="submit">Je m\'abonne</button>'
+        '</form>'
+        '<p class="inf-ok" hidden>Merci ! Tu recevras l\'infolettre dès demain matin. 🎉</p>'
+        '<script>function _inf(f){var e=f.email.value;'
+        'fetch("' + INFOLETTRE_HOOK + '",{method:"POST",mode:"no-cors",'
+        'headers:{"Content-Type":"application/x-www-form-urlencoded"},'
+        'body:"email="+encodeURIComponent(e)+"&site=' + site + '"});'
+        'f.hidden=true;f.parentNode.querySelector(".inf-ok").hidden=false;return false;}</script>'
+        '</section>')
+
+
 # Notifications push OneSignal (app « Chasseurs de Deals - Aubaines »).
 ONESIGNAL_APP_ID = "a5d68a4c-b078-4294-921f-53a46cbf1e7a"
 ONESIGNAL = (
@@ -83,6 +109,20 @@ CATEGORIES = {
     "3198031": "Électronique",
     "6205511011": "Jouets et jeux",
 }
+
+# Pages catégories PERMANENTES (URL stables pour Google, contenu regénéré
+# chaque matin avec les aubaines du jour).
+CATS_PAGES = [
+    ("Électronique", "electronique"),
+    ("Maison et cuisine", "maison-cuisine"),
+    ("Mode", "mode"),
+    ("Jouets et jeux", "jouets-jeux"),
+    ("Sports et plein air", "sports-plein-air"),
+    ("Outils et bricolage", "outils-bricolage"),
+    ("Auto", "auto"),
+    ("Aubaines", "autres-aubaines"),
+]
+CATS_LIBELLES = {"Aubaines": "Autres aubaines"}  # libellé affiché pour le fallback
 
 
 # ---------------------------------------------------------------------------
@@ -261,6 +301,7 @@ pour les achats admissibles. Le prix affiché peut avoir changé.</p>
 Les meilleurs deals chaque jour → notre page Facebook</a>
 </div>
 </article>
+{formulaire_infolettre("aubaines", compact=True)}
 </main>
 <footer>Mis à jour le {e(maj_iso)} · <a href="{e(SITE_PRINCIPAL)}">chasseursdedealsqc.com</a>
 · <a href="{e(PAGE_FACEBOOK)}">Facebook</a></footer>
@@ -273,13 +314,65 @@ def q(s) -> str:
     return json.dumps(str(s), ensure_ascii=False)
 
 
-def page_index(aubaines, maj_iso, maj_lisible) -> str:
-    cartes = "\n".join(f"""<a class="carte" href="/aubaine/{e(a['slug'])}.html">
+def cartes_html(aubaines) -> str:
+    return "\n".join(f"""<a class="carte" href="/aubaine/{e(a['slug'])}.html">
 <img src="{e(a['image'])}" alt="{e(a['titre'])}" loading="lazy" onerror="this.style.opacity=0">
 <span class="rabais">−{round(a['rabais'])} %</span>
 <span class="cat">{e(a['categorie'])}</span>
 <span class="t">{e(a['titre'][:70])}</span>
 <span class="p">{e(prix_txt(a))}</span></a>""" for a in aubaines)
+
+
+def chips_html(active_slug: str = "") -> str:
+    chips = []
+    for nom, slug in CATS_PAGES:
+        lib = CATS_LIBELLES.get(nom, nom)
+        cls = "chip actif" if slug == active_slug else "chip"
+        chips.append(f'<a class="{cls}" href="/categorie/{slug}.html">{e(lib)}</a>')
+    return '<nav class="chips">' + "".join(chips) + "</nav>"
+
+
+def page_categorie(nom, slug, items, maj_lisible) -> str:
+    lib = CATS_LIBELLES.get(nom, nom)
+    desc = (f"Les meilleures aubaines Amazon « {lib} » au Québec, mises à jour chaque matin "
+            f"par Chasseurs de Deals Québec. Rabais vérifiés du jour.")
+    contenu = (f'<section class="grille">{cartes_html(items)}</section>' if items else
+               '<p class="vide">Aucune aubaine dans cette catégorie aujourd\'hui — '
+               'les aubaines changent chaque matin, reviens demain ! '
+               '<a href="/">Voir toutes les aubaines du jour →</a></p>')
+    return f"""<!doctype html>
+<html lang="fr-CA">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Aubaines {e(lib)} au Québec — rabais du jour | Chasseurs de Deals</title>
+<meta name="description" content="{e(desc)}">
+<link rel="canonical" href="{e(DOMAINE)}/categorie/{slug}.html">
+<meta name="robots" content="index,follow,max-image-preview:large">
+<style>{CSS}</style>
+{GOOGLE_VERIF}
+{ONESIGNAL}
+</head>
+<body>
+<header><a class="logo" href="/">🔥 Chasseurs de Deals Québec</a>
+<a class="fb" href="{e(PAGE_FACEBOOK)}" rel="noopener">Suivre la page Facebook</a></header>
+<main>
+<nav class="fil"><a href="/">Accueil</a> › <span>{e(lib)}</span></nav>
+<section class="intro">
+<h1>Aubaines {e(lib)} au Québec</h1>
+<p>Les rabais Amazon « {e(lib)} » repérés aujourd'hui, mis à jour chaque matin.</p>
+</section>
+{chips_html(slug)}
+{contenu}
+{formulaire_infolettre("aubaines")}
+</main>
+<footer>Mis à jour le {e(maj_lisible)} · <a href="{e(SITE_PRINCIPAL)}">chasseursdedealsqc.com</a>
+· <a href="{e(PAGE_FACEBOOK)}">Facebook</a></footer>
+</body></html>"""
+
+
+def page_index(aubaines, maj_iso, maj_lisible) -> str:
+    cartes = cartes_html(aubaines)
     desc = ("Les meilleures aubaines Amazon du jour au Québec, mises à jour chaque matin. "
             "Rabais vérifiés, une page par aubaine. Par Chasseurs de Deals Québec.")
     return f"""<!doctype html>
@@ -308,7 +401,9 @@ def page_index(aubaines, maj_iso, maj_lisible) -> str:
 Clique une aubaine pour la voir — et suis notre
 <a href="{e(PAGE_FACEBOOK)}" rel="noopener">page Facebook</a> pour ne rien manquer.</p>
 </section>
+{chips_html()}
 <section class="grille">{cartes}</section>
+{formulaire_infolettre("aubaines")}
 </main>
 <footer>Mis à jour le {e(maj_lisible)} · <a href="{e(SITE_PRINCIPAL)}">chasseursdedealsqc.com</a>
 · <a href="{e(PAGE_FACEBOOK)}">Facebook</a></footer>
@@ -317,12 +412,50 @@ Clique une aubaine pour la voir — et suis notre
 
 def sitemap(aubaines, maj_iso) -> str:
     urls = [f"<url><loc>{DOMAINE}/</loc><lastmod>{maj_iso}</lastmod><changefreq>daily</changefreq><priority>1.0</priority></url>"]
+    for _nom, slug in CATS_PAGES:
+        urls.append(f"<url><loc>{DOMAINE}/categorie/{slug}.html</loc>"
+                    f"<lastmod>{maj_iso}</lastmod><changefreq>daily</changefreq><priority>0.8</priority></url>")
     for a in aubaines:
         urls.append(f"<url><loc>{DOMAINE}/aubaine/{a['slug']}.html</loc>"
                     f"<lastmod>{maj_iso}</lastmod><changefreq>daily</changefreq></url>")
     return ('<?xml version="1.0" encoding="UTF-8"?>\n'
             '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
             + "\n".join(urls) + "\n</urlset>\n")
+
+
+def infolettre_html(aubaines, maj_lisible) -> str:
+    """Courriel quotidien (HTML simple compatible courriel, styles en ligne).
+
+    Le lien {{ unsubscribe }} est remplacé automatiquement par Brevo.
+    """
+    lignes = []
+    for a in aubaines[:12]:
+        lignes.append(
+            '<tr><td style="padding:10px 0;border-bottom:1px solid #e8ecf0;">'
+            f'<a href="{e(DOMAINE)}/aubaine/{e(a["slug"])}.html" '
+            'style="color:#12232e;text-decoration:none;font-family:Arial,sans-serif;">'
+            f'<strong style="color:#e4572e;">−{round(a["rabais"])} %</strong> '
+            f'{e(a["titre"][:80])} — <strong>{e(prix_txt(a))}</strong></a></td></tr>')
+    return f"""<!doctype html>
+<html lang="fr-CA"><head><meta charset="utf-8"><title>Aubaines du jour</title></head>
+<body style="margin:0;background:#f6f7f9;font-family:Arial,Helvetica,sans-serif;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center" style="padding:22px 10px;">
+<table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background:#ffffff;border-radius:12px;overflow:hidden;">
+<tr><td style="background:#12232e;padding:18px 24px;">
+<span style="color:#ffffff;font-size:20px;font-weight:bold;">🔥 Chasseurs de Deals Québec</span><br>
+<span style="color:#cfe0e6;font-size:13px;">Les aubaines du jour — {e(maj_lisible)}</span></td></tr>
+<tr><td style="padding:20px 24px;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0">{''.join(lignes)}</table>
+<p style="text-align:center;margin:22px 0 8px;">
+<a href="{e(DOMAINE)}/" style="background:#e4572e;color:#ffffff;text-decoration:none;
+font-weight:bold;padding:12px 22px;border-radius:24px;display:inline-block;">
+Voir les {len(aubaines)} aubaines du jour →</a></p>
+<p style="color:#8496a8;font-size:11px;text-align:center;margin-top:18px;">
+En tant que Partenaire Amazon, nous sommes rémunérés pour les achats admissibles.
+Les prix peuvent avoir changé.<br>
+<a href="{{{{ unsubscribe }}}}" style="color:#8496a8;">Se désabonner</a> ·
+<a href="{e(PAGE_FACEBOOK)}" style="color:#8496a8;">Facebook</a></p>
+</td></tr></table></td></tr></table></body></html>"""
 
 
 ROBOTS = f"""# Ouvert aux moteurs de recherche et aux robots des IA.
@@ -415,6 +548,21 @@ border-radius:10px;font-size:16px}
 .fil a{color:#8496a8}
 footer{text-align:center;color:#8496a8;font-size:13px;padding:26px}
 footer a{color:#8496a8}
+.chips{display:flex;flex-wrap:wrap;gap:8px;margin:14px 0 6px}
+.chip{background:#fff;color:#1a2230;border:1px solid #d7dee6;padding:7px 14px;
+border-radius:20px;font-size:13px;font-weight:600}
+.chip:hover{border-color:#e4572e;color:#e4572e}
+.chip.actif{background:#e4572e;color:#fff;border-color:#e4572e}
+.vide{background:#fff;border-radius:12px;padding:26px;text-align:center;color:#5a6b7d}
+.infolettre{background:#12232e;border-radius:14px;padding:24px;margin:28px 0;color:#fff;text-align:center}
+.infolettre h2{font-size:20px;margin-bottom:6px}
+.infolettre p{color:#cfe0e6;font-size:14px;margin-bottom:14px}
+.inf-form{display:flex;gap:10px;justify-content:center;flex-wrap:wrap}
+.inf-form input{padding:12px 16px;border-radius:24px;border:none;font-size:15px;min-width:240px}
+.inf-form button{background:#e4572e;color:#fff;border:none;font-weight:700;font-size:15px;
+padding:12px 22px;border-radius:24px;cursor:pointer}
+.inf-ok{color:#7fd8a8;font-weight:600}
+.infolettre.compacte{padding:16px;margin:18px 0}
 @media(max-width:520px){.fiche{flex-direction:column}.fiche img{width:100%}}
 """
 
@@ -470,6 +618,17 @@ def main() -> int:
 
     SORTIE.mkdir(exist_ok=True)
     (SORTIE / "aubaine").mkdir(exist_ok=True)
+    (SORTIE / "categorie").mkdir(exist_ok=True)
+
+    # Pages catégories permanentes (contenu du jour).
+    for nom, slug in CATS_PAGES:
+        items = [a for a in aubaines if a["categorie"] == nom]
+        (SORTIE / "categorie" / f"{slug}.html").write_text(
+            page_categorie(nom, slug, items, maj_lisible), encoding="utf-8")
+
+    # Gabarit du courriel quotidien (lu par Brevo via Make chaque matin).
+    (SORTIE / "infolettre.html").write_text(
+        infolettre_html(aubaines, maj_lisible), encoding="utf-8")
 
     (SORTIE / "index.html").write_text(page_index(aubaines, maj_iso, maj_lisible), encoding="utf-8")
     (SORTIE / "sitemap.xml").write_text(sitemap(aubaines, maj_iso), encoding="utf-8")
