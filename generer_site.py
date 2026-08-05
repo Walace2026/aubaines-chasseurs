@@ -23,6 +23,7 @@ Dépendances : requests (seulement). Python 3.9+.
 import csv
 import html
 import io
+import os
 import re
 import sys
 import unicodedata
@@ -418,6 +419,46 @@ footer a{color:#8496a8}
 """
 
 
+# ---------------------------------------------------------------------------
+# Notification push quotidienne (« Aubaine du jour »)
+# ---------------------------------------------------------------------------
+
+ONESIGNAL_REST_URL = "https://api.onesignal.com/notifications"
+
+
+def envoyer_push(aubaines) -> None:
+    """Envoie une notification push OneSignal pour la meilleure aubaine du jour.
+
+    La clé API REST est lue dans la variable d'environnement
+    ONESIGNAL_REST_API_KEY (secret GitHub). Sans clé (ex. exécution locale),
+    l'envoi est simplement ignoré — la génération du site n'est jamais bloquée.
+    """
+    cle = os.environ.get("ONESIGNAL_REST_API_KEY", "").strip()
+    if not cle:
+        print("Push OneSignal ignoré (variable ONESIGNAL_REST_API_KEY absente).")
+        return
+    if not aubaines:
+        return
+    a = aubaines[0]  # la meilleure aubaine (plus haut rabais) = « aubaine du jour »
+    message = f"🔥 {a['titre'][:70]} — {round(a['rabais'])} % de rabais"
+    payload = {
+        "app_id": ONESIGNAL_APP_ID,
+        "included_segments": ["Subscribed Users"],
+        "headings": {"en": "Chasseurs de Deals — Aubaine du jour"},
+        "contents": {"en": message},
+        "url": DOMAINE + "/",
+        "chrome_web_icon": a.get("image", ""),
+    }
+    scheme = "Key" if cle.startswith("os_") else "Basic"
+    headers = {"Authorization": f"{scheme} {cle}",
+               "Content-Type": "application/json; charset=utf-8"}
+    try:
+        r = requests.post(ONESIGNAL_REST_URL, json=payload, headers=headers, timeout=30)
+        print(f"Push OneSignal → HTTP {r.status_code} : {r.text[:300]}")
+    except requests.RequestException as e:
+        print(f"Push OneSignal échoué (sans bloquer la génération) : {e}")
+
+
 def main() -> int:
     aubaines = lire_aubaines()
     if not aubaines:
@@ -448,6 +489,8 @@ def main() -> int:
     print(f"OK : {len(aubaines)} aubaines → {SORTIE}")
     print(f"  index.html, sitemap.xml ({len(aubaines)+1} URL), robots.txt, llms.txt, "
           f"{len(aubaines)} pages d'aubaines.")
+
+    envoyer_push(aubaines)
     return 0
 
 
