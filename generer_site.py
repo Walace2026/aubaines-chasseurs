@@ -59,8 +59,13 @@ ONESIGNAL = (
     + ONESIGNAL_APP_ID + '"});});</script>'
 )
 
-NB_AUBAINES = 50          # nombre de pages à générer (les meilleurs rabais)
+NB_AUBAINES = 100         # nombre de pages à générer (les meilleurs rabais)
 FUSEAU = timezone(timedelta(hours=-4))  # heure de l'Est
+
+# Balise de vérification Google Search Console (jeton propre au compte Google —
+# la même balise valide toutes les propriétés du compte).
+GOOGLE_VERIF = ('<meta name="google-site-verification" '
+                'content="737lfq2zJvydj4UTXGY0UncdQNHKiuT1RN5XDP0UYAw">')
 
 SORTIE = Path(__file__).resolve().parent / "public"
 
@@ -96,6 +101,43 @@ def nombre(v: str):
         return float(v)
     except ValueError:
         return None
+
+
+# --- Regroupement des variantes (même produit, grandeurs différentes) --------
+# On retire du titre les mentions de taille / format / quantité, puis on
+# regroupe les produits qui ne diffèrent que par la grandeur pour ne garder
+# que la variante LA MOINS CHÈRE.
+_MOTS_TAILLE = re.compile(
+    r"\b("
+    r"\d+(?:[.,]\d+)?\s?(?:mm|cm|m|in|inch|inches|ft|pi|po|pouces?|"
+    r"ml|l|litres?|cl|g|kg|mg|oz|lb|lbs)"                          # mesures + unité
+    r"|(?:pack|paquet|lot|ensemble|set|paq)\s?(?:of|de|d')?\s?\d+"  # pack de N
+    r"|\d+\s?(?:x|pack|paquet|pi[eè]ces?|pcs?|ct|count|unit[eé]s?|mcx)"  # N pièces
+    r"|(?:taille|size|pointure|us|eu|uk|eur|fr)\s?\d+(?:[.,]\d+)?"   # taille numérique
+    r"|(?:taille|size)\s?(?:s|m|l|x{1,3}(?:s|l)|xs|xl|xxl|"
+    r"small|medium|large|petit|moyen|grand)"                       # taille + lettre/mot
+    r"|x{1,3}(?:s|l)|xxl|xs|small|medium|large|"
+    r"one\s?size|taille\s?unique"                                  # tailles seules
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+def cle_variante(titre: str) -> str:
+    t = unicodedata.normalize("NFKD", titre or "").encode("ascii", "ignore").decode().lower()
+    t = _MOTS_TAILLE.sub(" ", t)
+    t = re.sub(r"[^a-z0-9]+", " ", t).strip()
+    t = re.sub(r"\s+", " ", t)
+    # Si le nettoyage réduit trop le titre, on retombe sur le titre complet
+    # pour ne pas fusionner par erreur deux produits différents.
+    return t if len(t) >= 12 else (titre or "").strip().lower()
+
+
+def choisir_moins_cher(items: list) -> dict:
+    avec_prix = [x for x in items if x.get("prix") is not None]
+    if avec_prix:
+        return min(avec_prix, key=lambda x: x["prix"])
+    return max(items, key=lambda x: x["rabais"])
 
 
 def lire_aubaines() -> list:
@@ -134,16 +176,24 @@ def lire_aubaines() -> list:
             "categorie": CATEGORIES.get((rootcat or "").strip(), "Aubaines"),
         })
 
-    # Les meilleurs rabais d'abord, dédoublonnés par ASIN.
-    vus, uniques = set(), []
-    for a in sorted(aubaines, key=lambda x: x["rabais"], reverse=True):
-        if a["asin"] in vus:
-            continue
-        vus.add(a["asin"])
+    # 1) Dédoublonnage strict par ASIN.
+    par_asin = {}
+    for a in aubaines:
+        par_asin.setdefault(a["asin"], a)
+
+    # 2) Regroupe les variantes (même produit, grandeurs différentes) et ne
+    #    garde que la MOINS CHÈRE de chaque groupe.
+    groupes = {}
+    for a in par_asin.values():
+        groupes.setdefault(cle_variante(a["titre"]), []).append(a)
+    retenues = [choisir_moins_cher(g) for g in groupes.values()]
+
+    # 3) Meilleurs rabais d'abord, puis slug + image.
+    retenues.sort(key=lambda x: x["rabais"], reverse=True)
+    for a in retenues:
         a["slug"] = slugifier(a["titre"], a["asin"])
         a["image"] = f"https://images-na.ssl-images-amazon.com/images/P/{a['asin']}.01._SCLZZZZZZZ_.jpg"
-        uniques.append(a)
-    return uniques[:NB_AUBAINES]
+    return retenues[:NB_AUBAINES]
 
 
 # ---------------------------------------------------------------------------
@@ -187,6 +237,7 @@ def page_aubaine(a, maj_iso: str) -> str:
 <meta name="robots" content="index,follow,max-image-preview:large">
 <script type="application/ld+json">{jsonld}</script>
 <style>{CSS}</style>
+{GOOGLE_VERIF}
 {ONESIGNAL}
 </head>
 <body>
@@ -243,6 +294,7 @@ def page_index(aubaines, maj_iso, maj_lisible) -> str:
 <meta property="og:url" content="{e(DOMAINE)}/">
 <meta name="robots" content="index,follow,max-image-preview:large">
 <style>{CSS}</style>
+{GOOGLE_VERIF}
 {ONESIGNAL}
 </head>
 <body>
