@@ -7,7 +7,7 @@ generer_site.py — Génère le sous-site « aubaines.chasseursdedealsqc.com »
 Lit les aubaines depuis la feuille Google publiée (Site_Aubaines) et produit
 un site statique optimisé pour Google, Bing ET les robots des IA :
 
-  - index.html                 la page d'accueil (les 50 meilleures aubaines)
+  - index.html                 la page d'accueil (jusqu'à 1000 aubaines, photo obligatoire)
   - aubaine/<slug>.html        une page par aubaine, indexable
   - sitemap.xml                le plan du site (soumis à Google/Bing)
   - robots.txt                 ouvert aux moteurs et aux IA (GPTBot, ClaudeBot…)
@@ -86,7 +86,7 @@ ONESIGNAL = (
     + ONESIGNAL_APP_ID + '"});});</script>'
 )
 
-NB_AUBAINES = 100         # nombre de pages à générer (les meilleurs rabais)
+NB_AUBAINES = 1000        # nombre de pages à générer (les meilleurs rabais)
 FUSEAU = timezone(timedelta(hours=-4))  # heure de l'Est
 
 # Balise de vérification Google Search Console (jeton propre au compte Google —
@@ -234,7 +234,43 @@ def lire_aubaines() -> list:
     for a in retenues:
         a["slug"] = slugifier(a["titre"], a["asin"])
         a["image"] = f"https://images-na.ssl-images-amazon.com/images/P/{a['asin']}.01._SCLZZZZZZZ_.jpg"
+
+    # 4) LA PHOTO EST OBLIGATOIRE. Une annonce sans image ne s'affiche pas.
+    #    Amazon ne renvoie pas d'erreur pour une image absente : il renvoie un
+    #    GIF d'un seul pixel, à peine quelques dizaines d'octets. On mesure.
+    retenues = garder_avec_photo(retenues)
     return retenues[:NB_AUBAINES]
+
+
+def garder_avec_photo(aubaines):
+    """Ne garde que les aubaines dont l'image Amazon existe vraiment."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    def a_une_photo(a):
+        try:
+            r = requests.head(a["image"], timeout=8, allow_redirects=True)
+            taille = int(r.headers.get("Content-Length") or 0)
+            if r.status_code != 200:
+                return False
+            if taille:            # le GIF « image absente » fait ~40 octets
+                return taille > 1000
+            # Pas de Content-Length ? On lit le début du fichier pour trancher.
+            g = requests.get(a["image"], timeout=8, stream=True)
+            morceau = next(g.iter_content(2048), b"")
+            g.close()
+            return len(morceau) > 1000
+        except requests.RequestException:
+            # Dans le doute (réseau qui tousse), on garde : le filet
+            # côté navigateur retirera la carte si l'image ne vient pas.
+            return True
+
+    with ThreadPoolExecutor(max_workers=16) as pool:
+        verdicts = list(pool.map(a_une_photo, aubaines))
+    gardees = [a for a, ok in zip(aubaines, verdicts) if ok]
+    retirees = len(aubaines) - len(gardees)
+    if retirees:
+        print(f"{retirees} aubaine(s) sans photo écartée(s) — la photo est obligatoire.")
+    return gardees
 
 
 # ---------------------------------------------------------------------------
@@ -316,7 +352,9 @@ def q(s) -> str:
 
 def cartes_html(aubaines) -> str:
     return "\n".join(f"""<a class="carte" href="/aubaine/{e(a['slug'])}.html">
-<img src="{e(a['image'])}" alt="{e(a['titre'])}" loading="lazy" onerror="this.style.opacity=0">
+<img src="{e(a['image'])}" alt="{e(a['titre'])}" loading="lazy"
+ onload="if(this.naturalWidth<2)this.closest('.carte').remove()"
+ onerror="this.closest('.carte').remove()">
 <span class="rabais">−{round(a['rabais'])} %</span>
 <span class="cat">{e(a['categorie'])}</span>
 <span class="t">{e(a['titre'][:70])}</span>
@@ -402,7 +440,28 @@ Clique une aubaine pour la voir — et suis notre
 <a href="{e(PAGE_FACEBOOK)}" rel="noopener">page Facebook</a> pour ne rien manquer.</p>
 </section>
 {chips_html()}
-<section class="grille">{cartes}</section>
+<div class="recherche"><input type="search" id="q" placeholder="🔎 Rechercher un produit… (nom, marque, catégorie)"
+ autocomplete="off"><span class="r-nb" id="qn"></span></div>
+<section class="grille" id="grille">{cartes}</section>
+<p class="r-vide" id="qv" hidden>Aucune aubaine ne correspond. Essaie un mot plus court —
+« casque » plutôt que « casque bluetooth sony ».</p>
+<script>
+(function(){{
+  var q=document.getElementById('q'),g=document.getElementById('grille'),
+      n=document.getElementById('qn'),v=document.getElementById('qv');
+  function plat(s){{return s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');}}
+  var cartes=[].slice.call(g.children).map(function(c){{
+    return {{el:c,txt:plat(c.textContent||'')}};}});
+  function filtre(){{
+    var t=plat(q.value.trim()),vis=0;
+    cartes.forEach(function(c){{
+      var ok=!t||t.split(/\s+/).every(function(m){{return c.txt.indexOf(m)>=0;}});
+      c.el.style.display=ok?'':'none';if(ok)vis++;}});
+    n.textContent=t?vis+' résultat'+(vis>1?'s':''):'';
+    v.hidden=!t||vis>0;}}
+  q.addEventListener('input',filtre);
+}})();
+</script>
 {formulaire_infolettre("aubaines")}
 </main>
 <footer>Mis à jour le {e(maj_lisible)} · <a href="{e(SITE_PRINCIPAL)}">chasseursdedealsqc.com</a>
@@ -527,6 +586,11 @@ main{max-width:1100px;margin:0 auto;padding:20px}
 display:flex;flex-direction:column;padding:12px;position:relative;transition:transform .1s}
 .carte:hover{transform:translateY(-3px)}
 .carte img{width:100%;height:150px;object-fit:contain}
+.recherche{display:flex;align-items:center;gap:10px;margin:14px 0 6px}
+.recherche input{flex:1;max-width:520px;padding:11px 14px;font-size:15px;border:2px solid #d90429;border-radius:10px;outline:none}
+.recherche input:focus{box-shadow:0 0 0 3px rgba(217,4,41,.15)}
+.r-nb{color:#666;font-size:13px;white-space:nowrap}
+.r-vide{color:#666;padding:24px 0;text-align:center}
 .carte .rabais{position:absolute;top:10px;left:10px;background:#e4572e;color:#fff;
 font-weight:700;font-size:12px;padding:3px 8px;border-radius:20px}
 .carte .cat{color:#8496a8;font-size:11px;text-transform:uppercase;margin-top:8px;letter-spacing:.4px}
