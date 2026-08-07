@@ -93,6 +93,8 @@ FUSEAU = timezone(timedelta(hours=-4))  # heure de l'Est
 # la même balise valide toutes les propriétés du compte).
 GOOGLE_VERIF = ('<meta name="google-site-verification" '
                 'content="737lfq2zJvydj4UTXGY0UncdQNHKiuT1RN5XDP0UYAw">')
+# Balise de vérification Pinterest — permet de revendiquer le domaine sur Pinterest
+GOOGLE_VERIF += '<meta name="p:domain_verify" content="643106277e09e6d158eaa73f88c1bf3c">'
 
 SORTIE = Path(__file__).resolve().parent / "public"
 
