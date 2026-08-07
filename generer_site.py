@@ -342,7 +342,7 @@ Les meilleurs deals chaque jour → notre page Facebook</a>
 {formulaire_infolettre("aubaines", compact=True)}
 </main>
 <footer>Mis à jour le {e(maj_iso)} · <a href="{e(SITE_PRINCIPAL)}">chasseursdedealsqc.com</a>
-· <a href="{e(PAGE_FACEBOOK)}">Facebook</a></footer>
+· <a href="{e(PAGE_FACEBOOK)}">Facebook</a> · <a href="/divulgation.html">Divulgation d'affiliation</a><br>En tant que Partenaire Amazon, je réalise un bénéfice sur les achats remplissant les conditions requises.</footer>
 </body></html>"""
 
 
@@ -407,7 +407,7 @@ def page_categorie(nom, slug, items, maj_lisible) -> str:
 {formulaire_infolettre("aubaines")}
 </main>
 <footer>Mis à jour le {e(maj_lisible)} · <a href="{e(SITE_PRINCIPAL)}">chasseursdedealsqc.com</a>
-· <a href="{e(PAGE_FACEBOOK)}">Facebook</a></footer>
+· <a href="{e(PAGE_FACEBOOK)}">Facebook</a> · <a href="/divulgation.html">Divulgation d'affiliation</a><br>En tant que Partenaire Amazon, je réalise un bénéfice sur les achats remplissant les conditions requises.</footer>
 </body></html>"""
 
 
@@ -467,7 +467,7 @@ Clique une aubaine pour la voir — et suis notre
 {formulaire_infolettre("aubaines")}
 </main>
 <footer>Mis à jour le {e(maj_lisible)} · <a href="{e(SITE_PRINCIPAL)}">chasseursdedealsqc.com</a>
-· <a href="{e(PAGE_FACEBOOK)}">Facebook</a></footer>
+· <a href="{e(PAGE_FACEBOOK)}">Facebook</a> · <a href="/divulgation.html">Divulgation d'affiliation</a><br>En tant que Partenaire Amazon, je réalise un bénéfice sur les achats remplissant les conditions requises.</footer>
 </body></html>"""
 
 
@@ -673,6 +673,43 @@ def envoyer_push(aubaines) -> None:
         print(f"Push OneSignal échoué (sans bloquer la génération) : {e}")
 
 
+def page_divulgation(maj_lisible: str) -> str:
+    desc = ("Divulgation d'affiliation de Chasseurs de Deals Quebec : comment le site "
+            "gagne une commission sur les achats admissibles effectues sur Amazon.ca.")
+    return f"""<!doctype html>
+<html lang="fr-CA">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Divulgation d'affiliation — Chasseurs de Deals Québec</title>
+<meta name="description" content="{e(desc)}">
+<link rel="canonical" href="{e(DOMAINE)}/divulgation.html">
+<meta name="robots" content="index,follow">
+<style>{CSS}</style>
+{GOOGLE_VERIF}
+</head>
+<body>
+<header><a class="logo" href="/">🔥 Chasseurs de Deals Québec</a>
+<a class="fb" href="{e(PAGE_FACEBOOK)}" rel="noopener">Suivre la page Facebook</a></header>
+<main>
+<section class="intro">
+<h1>Divulgation d'affiliation</h1>
+<p><strong>En tant que Partenaire Amazon, je réalise un bénéfice sur les achats remplissant les conditions requises.</strong></p>
+<p>Chasseurs de Deals Québec participe au Programme Partenaires d'Amazon.ca, un programme d'affiliation qui permet à des sites de percevoir une commission sur les achats admissibles effectués après un clic sur nos liens.</p>
+<p>Concrètement : quand tu cliques sur une aubaine et que tu achètes sur Amazon, le prix que tu paies reste exactement le même. Amazon nous verse une petite commission sur la vente. C'est ce qui finance le travail de repérage quotidien des rabais.</p>
+<h2>Ce que ça ne change pas</h2>
+<p>Les rabais affichés sont réels et vérifiés. Aucun marchand ne paie pour apparaître sur ce site, et aucune commission n'influence le classement des aubaines : elles sont triées par pourcentage de rabais, point.</p>
+<h2>Prix et disponibilité</h2>
+<p>Les prix et la disponibilité affichés ici sont exacts au moment de la mise à jour (dernière : {e(maj_lisible)}) et peuvent changer à tout moment. Le prix qui fait foi est celui affiché sur Amazon.ca au moment de ton achat.</p>
+<h2>Nous joindre</h2>
+<p>Une question ? Écris-nous sur notre <a href="{e(PAGE_FACEBOOK)}" rel="noopener">page Facebook</a>.</p>
+</section>
+</main>
+<footer>Mis à jour le {e(maj_lisible)} · <a href="{e(SITE_PRINCIPAL)}">chasseursdedealsqc.com</a>
+· <a href="{e(PAGE_FACEBOOK)}">Facebook</a> · <a href="/divulgation.html">Divulgation d'affiliation</a><br>En tant que Partenaire Amazon, je réalise un bénéfice sur les achats remplissant les conditions requises.</footer>
+</body></html>"""
+
+
 def main() -> int:
     aubaines = lire_aubaines()
     if not aubaines:
@@ -697,6 +734,7 @@ def main() -> int:
         infolettre_html(aubaines, maj_lisible), encoding="utf-8")
 
     (SORTIE / "index.html").write_text(page_index(aubaines, maj_iso, maj_lisible), encoding="utf-8")
+    (SORTIE / "divulgation.html").write_text(page_divulgation(maj_lisible), encoding="utf-8")
     (SORTIE / "sitemap.xml").write_text(sitemap(aubaines, maj_iso), encoding="utf-8")
     (SORTIE / "robots.txt").write_text(ROBOTS, encoding="utf-8")
     (SORTIE / "llms.txt").write_text(llms_txt(aubaines, maj_lisible), encoding="utf-8")
