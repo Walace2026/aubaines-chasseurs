@@ -9,7 +9,7 @@ on:
   workflow_dispatch:        # bouton pour lancer a la main
 
 permissions:
-  contents: read
+  contents: write
   pages: write
   id-token: write
 
@@ -31,6 +31,17 @@ jobs:
         run: python generer_site.py
         env:
           ONESIGNAL_REST_API_KEY: ${{ secrets.ONESIGNAL_REST_API_KEY }}
+      - name: Conserver l'archive des aubaines
+        run: |
+          if [ -n "$(git status --porcelain archive.json)" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add archive.json
+            git commit -m "Archive des aubaines : mise a jour automatique"
+            git push
+          else
+            echo "Archive inchangee"
+          fi
       - name: Preparer l'artefact Pages
         uses: actions/upload-pages-artifact@v3
         with:
