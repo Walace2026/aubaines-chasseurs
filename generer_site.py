@@ -21,6 +21,7 @@ Dépendances : requests (seulement). Python 3.9+.
 """
 
 import csv
+import json
 import html
 import io
 import os
@@ -421,6 +422,7 @@ def page_index(aubaines, maj_iso, maj_lisible) -> str:
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Aubaines du jour au Québec — Chasseurs de Deals Québec</title>
+<link rel="alternate" type="application/rss+xml" title="Aubaines du jour au Québec" href="/rss.xml">
 <meta name="description" content="{e(desc)}">
 <link rel="canonical" href="{e(DOMAINE)}/">
 <meta property="og:title" content="Aubaines du jour au Québec">
@@ -471,7 +473,7 @@ Clique une aubaine pour la voir — et suis notre
 </body></html>"""
 
 
-def sitemap(aubaines, maj_iso) -> str:
+def sitemap(aubaines, maj_iso, archives=None) -> str:
     urls = [f"<url><loc>{DOMAINE}/</loc><lastmod>{maj_iso}</lastmod><changefreq>daily</changefreq><priority>1.0</priority></url>"]
     for _nom, slug in CATS_PAGES:
         urls.append(f"<url><loc>{DOMAINE}/categorie/{slug}.html</loc>"
@@ -479,6 +481,13 @@ def sitemap(aubaines, maj_iso) -> str:
     for a in aubaines:
         urls.append(f"<url><loc>{DOMAINE}/aubaine/{a['slug']}.html</loc>"
                     f"<lastmod>{maj_iso}</lastmod><changefreq>daily</changefreq></url>")
+    urls.append(f"<url><loc>{DOMAINE}/divulgation.html</loc><changefreq>monthly</changefreq><priority>0.3</priority></url>")
+    vivants = {a["slug"] for a in aubaines}
+    for slug, ent in (archives or {}).items():
+        if slug in vivants:
+            continue
+        urls.append(f"<url><loc>{DOMAINE}/aubaine/{slug}.html</loc>"
+                    f"<lastmod>{ent.get('dernier', maj_iso)}</lastmod><changefreq>monthly</changefreq><priority>0.4</priority></url>")
     return ('<?xml version="1.0" encoding="UTF-8"?>\n'
             '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
             + "\n".join(urls) + "\n</urlset>\n")
@@ -673,6 +682,141 @@ def envoyer_push(aubaines) -> None:
         print(f"Push OneSignal échoué (sans bloquer la génération) : {e}")
 
 
+# ---------------------------------------------------------------------------
+# ARCHIVE : les pages d'aubaines restent en ligne apres l'expiration du rabais.
+# Chaque page conserve son historique de prix : c'est du contenu unique que
+# Google ne trouve nulle part ailleurs, et les epingles / liens ne meurent plus.
+# ---------------------------------------------------------------------------
+ARCHIVE_FICHIER = Path(__file__).parent / "archive.json"
+JOURS_ARCHIVE = 120
+MAX_ARCHIVE = 4000
+INDEXNOW_CLE = "8f3c1d27a94b4e6fb0c5d2e719a6f480"
+
+
+def charger_archive() -> dict:
+    if ARCHIVE_FICHIER.exists():
+        try:
+            donnees = json.loads(ARCHIVE_FICHIER.read_text(encoding="utf-8"))
+            return donnees if isinstance(donnees, dict) else {}
+        except Exception as exc:
+            print(f"Archive illisible, on repart a zero : {exc}")
+    return {}
+
+
+def fusionner_archive(arch: dict, aubaines: list, jour: str) -> dict:
+    for a in aubaines:
+        ent = arch.get(a["slug"]) or {"prix": [], "premier": jour}
+        hist = ent.get("prix") or []
+        if a["prix"]:
+            valeur = round(float(a["prix"]), 2)
+            if not hist or hist[-1][1] != valeur:
+                hist.append([jour, valeur])
+        ent.update({
+            "asin": a["asin"], "titre": a["titre"], "image": a["image"],
+            "lien": a["lien"], "categorie": a["categorie"],
+            "rabais": a["rabais"], "dernier": jour, "prix": hist[-60:],
+        })
+        ent.setdefault("premier", jour)
+        arch[a["slug"]] = ent
+    limite = (datetime.now(timezone.utc) - timedelta(days=JOURS_ARCHIVE)).strftime("%Y-%m-%d")
+    arch = {k: v for k, v in arch.items() if str(v.get("dernier", "")) >= limite}
+    if len(arch) > MAX_ARCHIVE:
+        arch = dict(sorted(arch.items(), key=lambda kv: str(kv[1].get("dernier", "")), reverse=True)[:MAX_ARCHIVE])
+    return arch
+
+
+def page_archive(slug: str, ent: dict, connexes: list, maj_lisible: str) -> str:
+    hist = ent.get("prix") or []
+    dernier = f"{hist[-1][1]:.2f} $".replace(".", ",") if hist else "n/d"
+    plus_bas = f"{min(p[1] for p in hist):.2f} $".replace(".", ",") if hist else "n/d"
+    cats = dict(CATS_PAGES)
+    cat_nom = ent.get("categorie", "Aubaines")
+    cat_slug = cats.get(cat_nom, "")
+    lien_cat = f"/categorie/{cat_slug}.html" if cat_slug else "/"
+    lignes = "".join(
+        f"<tr><td style='padding:8px 14px;border-bottom:1px solid #223'>{e(d)}</td>"
+        f"<td style='padding:8px 14px;border-bottom:1px solid #223;text-align:right'>"
+        f"{('%.2f' % v).replace('.', ',')} $</td></tr>"
+        for d, v in reversed(hist[-24:])
+    )
+    titre_page = f"{ent.get('titre', 'Aubaine')} — historique de prix au Québec"
+    desc = (f"Historique de prix de {ent.get('titre', 'cet article')} au Québec. "
+            f"Prix le plus bas observé : {plus_bas}. Cette aubaine est terminée — "
+            f"voir les rabais en cours.")
+    url = f"{DOMAINE}/aubaine/{slug}.html"
+    return f"""<!doctype html>
+<html lang="fr-CA">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{e(titre_page)} | Chasseurs de Deals Québec</title>
+<meta name="description" content="{e(desc)}">
+<link rel="canonical" href="{e(url)}">
+<meta name="robots" content="index,follow,max-image-preview:large">
+<style>{CSS}</style>
+{GOOGLE_VERIF}
+</head>
+<body>
+<header><a class="logo" href="/">🔥 Chasseurs de Deals Québec</a>
+<a class="fb" href="{e(PAGE_FACEBOOK)}" rel="noopener">Suivre la page Facebook</a></header>
+<main>
+<section class="intro">
+<p style="background:#3a2a12;border:1px solid #6b4b16;color:#ffce6a;padding:12px 16px;border-radius:10px;font-weight:700">
+⏳ Cette aubaine est terminée. Voici son historique de prix — et les rabais en cours plus bas.</p>
+<h1>{e(ent.get('titre', 'Aubaine'))}</h1>
+<p>Catégorie : <a href="{e(lien_cat)}">{e(cat_nom)}</a> ·
+Repérée pour la première fois le {e(str(ent.get('premier', '')))} ·
+Dernière fois en rabais le {e(str(ent.get('dernier', '')))}.</p>
+<p><strong>Dernier prix observé : {e(dernier)}</strong> · Prix le plus bas jamais vu : <strong>{e(plus_bas)}</strong></p>
+<h2>Historique de prix</h2>
+<table style="width:100%;max-width:520px;border-collapse:collapse;font-size:15px">
+<tr><th style="text-align:left;padding:8px 14px;border-bottom:2px solid #2c3a4d">Date</th>
+<th style="text-align:right;padding:8px 14px;border-bottom:2px solid #2c3a4d">Prix</th></tr>
+{lignes}
+</table>
+<p style="margin-top:22px"><a class="fb" href="{e(lien_cat)}">Voir les aubaines {e(cat_nom.lower())} du jour</a></p>
+<h2>Les aubaines en cours dans cette catégorie</h2>
+</section>
+{cartes_html(connexes)}
+</main>
+<footer>Mis à jour le {e(maj_lisible)} · <a href="{e(SITE_PRINCIPAL)}">chasseursdedealsqc.com</a>
+· <a href="{e(PAGE_FACEBOOK)}">Facebook</a> · <a href="/divulgation.html">Divulgation d'affiliation</a><br>En tant que Partenaire Amazon, je réalise un bénéfice sur les achats remplissant les conditions requises.</footer>
+</body></html>"""
+
+
+def rss_xml(aubaines, maj_iso: str) -> str:
+    items = []
+    for a in aubaines[:60]:
+        lien = f"{DOMAINE}/aubaine/{a['slug']}.html"
+        titre = f"{a['titre']} — {round(a['rabais'])} % de rabais ({prix_txt(a)})"
+        items.append("<item>"
+                     f"<title>{e(titre)}</title>"
+                     f"<link>{e(lien)}</link>"
+                     f"<guid isPermaLink=\"true\">{e(lien)}</guid>"
+                     f"<category>{e(a['categorie'])}</category>"
+                     f"<description>{e(titre)}</description>"
+                     "</item>")
+    return ('<?xml version="1.0" encoding="UTF-8"?>\n'
+            '<rss version="2.0"><channel>'
+            "<title>Aubaines du jour au Quebec - Chasseurs de Deals Quebec</title>"
+            f"<link>{DOMAINE}/</link>"
+            "<description>Les meilleurs rabais Amazon reperes chaque matin au Quebec.</description>"
+            "<language>fr-ca</language>"
+            + "".join(items) + "</channel></rss>\n")
+
+
+def pinger_indexnow(urls: list) -> None:
+    try:
+        hote = DOMAINE.split("//", 1)[-1].strip("/")
+        r = requests.post("https://api.indexnow.org/indexnow",
+                          json={"host": hote, "key": INDEXNOW_CLE,
+                                "keyLocation": f"{DOMAINE}/{INDEXNOW_CLE}.txt",
+                                "urlList": urls[:1000]}, timeout=25)
+        print(f"IndexNow : {r.status_code} pour {min(len(urls), 1000)} URL")
+    except Exception as exc:
+        print(f"IndexNow ignore : {exc}")
+
+
 def page_divulgation(maj_lisible: str) -> str:
     desc = ("Divulgation d'affiliation de Chasseurs de Deals Quebec : comment le site "
             "gagne une commission sur les achats admissibles effectues sur Amazon.ca.")
@@ -735,7 +879,11 @@ def main() -> int:
 
     (SORTIE / "index.html").write_text(page_index(aubaines, maj_iso, maj_lisible), encoding="utf-8")
     (SORTIE / "divulgation.html").write_text(page_divulgation(maj_lisible), encoding="utf-8")
-    (SORTIE / "sitemap.xml").write_text(sitemap(aubaines, maj_iso), encoding="utf-8")
+    jour = datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d")
+    archives = fusionner_archive(charger_archive(), aubaines, jour)
+    ARCHIVE_FICHIER.write_text(json.dumps(archives, ensure_ascii=False, sort_keys=True),
+                               encoding="utf-8")
+    (SORTIE / "sitemap.xml").write_text(sitemap(aubaines, maj_iso, archives), encoding="utf-8")
     (SORTIE / "robots.txt").write_text(ROBOTS, encoding="utf-8")
     (SORTIE / "llms.txt").write_text(llms_txt(aubaines, maj_lisible), encoding="utf-8")
     # Un domaine personnalisé sur GitHub Pages a besoin d'un fichier CNAME.
@@ -749,6 +897,22 @@ def main() -> int:
         (SORTIE / "aubaine" / f"{a['slug']}.html").write_text(
             page_aubaine(a, maj_lisible), encoding="utf-8")
 
+    vivants = {a["slug"] for a in aubaines}
+    par_cat = {}
+    for a in aubaines:
+        par_cat.setdefault(a["categorie"], []).append(a)
+    n_arch = 0
+    for slug, ent in archives.items():
+        if slug in vivants:
+            continue
+        connexes = par_cat.get(ent.get("categorie", ""), [])[:6]
+        (SORTIE / "aubaine" / f"{slug}.html").write_text(
+            page_archive(slug, ent, connexes, maj_lisible), encoding="utf-8")
+        n_arch += 1
+    (SORTIE / "rss.xml").write_text(rss_xml(aubaines, maj_iso), encoding="utf-8")
+    (SORTIE / f"{INDEXNOW_CLE}.txt").write_text(INDEXNOW_CLE, encoding="utf-8")
+    pinger_indexnow([f"{DOMAINE}/"] + [f"{DOMAINE}/aubaine/{a['slug']}.html" for a in aubaines])
+    print(f"  archive : {n_arch} pages conservees, {len(archives)} entrees")
     print(f"OK : {len(aubaines)} aubaines → {SORTIE}")
     print(f"  index.html, sitemap.xml ({len(aubaines)+1} URL), robots.txt, llms.txt, "
           f"{len(aubaines)} pages d'aubaines.")
