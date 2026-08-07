@@ -47,6 +47,14 @@ CSV_URLS = [
     f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&gid={SHEET_GID}",
 ]
 
+# Cache des titres traduits en francais (onglet « Traductions », colonnes
+# ASIN | titre FR). Alimente chaque matin a 5 h 12 par le scenario Make
+# « TRADUCTION - cache titres FR », soit avant la generation de 5 h 20.
+TRAD_URLS = [
+    f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/gviz/tq?tqx=out:csv&sheet=Traductions",
+    f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&sheet=Traductions",
+]
+
 # Adresses publiques.
 DOMAINE = "https://aubaines.chasseursdedealsqc.com"
 PAGE_FACEBOOK = "https://www.facebook.com/ChasseursDeDealsQc"
@@ -191,14 +199,41 @@ _MOTS_TAILLE = re.compile(
 )
 
 
+# Suffixes de taille propres aux vetements et aux chaussures, que le motif
+# general ci-dessus ne couvre pas : « 32W x 34L », « 9.5 N US », « 48G US ».
+_SUFFIXE_TAILLE = re.compile(
+    r"\b("
+    r"\d+(?:[.,]\d+)?\s?w\s?x\s?\d+(?:[.,]\d+)?\s?l"      # 32W x 34L
+    r"|w\d+\s?x\s?l\d+"                                    # W36 x L80
+    r"|\d+(?:[.,]\d+)?\s?[a-z]{0,2}\s?(?:us|ca|eu|uk)\b"     # 9.5 N US, 48G US
+    r"|\d+(?:[.,]\d+)?\s?(?:w|l|d|dd|ddd)\b"                 # 46W, 34L, 54DD
+    r")",
+    re.IGNORECASE,
+)
+
+
 def cle_variante(titre: str) -> str:
-    t = unicodedata.normalize("NFKD", titre or "").encode("ascii", "ignore").decode().lower()
+    """Cle de regroupement : deux variantes du meme produit la partagent.
+
+    Amazon construit ses titres ainsi : le nom du produit, puis les attributs
+    de variante apres une virgule (« ...Ankle Boot, Black Tumbled, 9.5 N US »).
+    On coupe donc a la premiere virgule quand ce qui precede suffit a
+    identifier le produit : cela regle d un coup les couleurs ET les tailles.
+    Le seuil de 25 caracteres evite de tronquer « Club House, Quality Herbs... »
+    a une marque seule et de fusionner des produits sans rapport.
+    """
+    brut = (titre or "").strip()
+    t = unicodedata.normalize("NFKD", brut).encode("ascii", "ignore").decode()
+    tete = t.split(",")[0].strip()
+    if len(tete) >= 25:
+        t = tete
+    t = _SUFFIXE_TAILLE.sub(" ", t)
     t = _MOTS_TAILLE.sub(" ", t)
-    t = re.sub(r"[^a-z0-9]+", " ", t).strip()
+    t = re.sub(r"[^a-z0-9]+", " ", t.lower()).strip()
     t = re.sub(r"\s+", " ", t)
-    # Si le nettoyage réduit trop le titre, on retombe sur le titre complet
-    # pour ne pas fusionner par erreur deux produits différents.
-    return t if len(t) >= 12 else (titre or "").strip().lower()
+    # Si le nettoyage reduit trop le titre, on retombe sur le titre complet
+    # pour ne pas fusionner par erreur deux produits differents.
+    return t if len(t) >= 12 else brut.lower()
 
 
 def choisir_moins_cher(items: list) -> dict:
@@ -206,6 +241,35 @@ def choisir_moins_cher(items: list) -> dict:
     if avec_prix:
         return min(avec_prix, key=lambda x: x["prix"])
     return max(items, key=lambda x: x["rabais"])
+
+
+def lire_traductions() -> dict:
+    """ASIN -> titre francais, depuis l onglet « Traductions ».
+
+    Volontairement tolerant : si l onglet est absent, vide ou injoignable, le
+    site se genere quand meme avec les titres d origine. Une traduction
+    manquante ne doit jamais empecher la publication des aubaines du matin.
+    """
+    for url in TRAD_URLS:
+        try:
+            r = requests.get(url, timeout=30)
+            r.raise_for_status()
+            r.encoding = "utf-8"
+            if "<html" in r.text[:200].lower():
+                continue
+            trad = {}
+            for ligne in csv.reader(io.StringIO(r.text)):
+                if len(ligne) < 2:
+                    continue
+                asin, fr = (ligne[0] or "").strip(), (ligne[1] or "").strip()
+                if re.fullmatch(r"[A-Z0-9]{10}", asin) and fr:
+                    trad.setdefault(asin, fr)
+            print(f"  traductions : {len(trad)} titres en francais")
+            return trad
+        except (requests.RequestException, ValueError, csv.Error):
+            continue
+    print("  traductions : onglet injoignable, titres d origine conserves")
+    return {}
 
 
 def lire_aubaines() -> list:
@@ -225,6 +289,8 @@ def lire_aubaines() -> list:
     if texte is None:
         raise SystemExit(f"ERREUR : impossible de lire la feuille publiée ({dernier}).")
 
+    trad = lire_traductions()
+
     aubaines = []
     for ligne in csv.reader(io.StringIO(texte)):
         if len(ligne) < 9:
@@ -237,7 +303,7 @@ def lire_aubaines() -> list:
             continue
         aubaines.append({
             "asin": asin,
-            "titre": (titre or "").strip() or "Aubaine",
+            "titre": trad.get(asin) or (titre or "").strip() or "Aubaine",
             "rabais": nombre(rabais) or 0,
             "prix": nombre(prix),
             "lien": (lien or "").strip(),
