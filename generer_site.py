@@ -99,18 +99,42 @@ GOOGLE_VERIF += '<meta name="p:domain_verify" content="643106277e09e6d158eaa73f8
 
 SORTIE = Path(__file__).resolve().parent / "public"
 
+# Contenu editorial des pages categorie (voir intros_categories.py).
+try:
+    from intros_categories import INTROS
+except ImportError:            # le site se genere quand meme sans les intros
+    INTROS = {}
+
 # rootCat Amazon.ca → nom de catégorie lisible (best-effort ; « Aubaines » sinon).
+# Table corrigee le 7 aout 2026 a partir des 537 aubaines reelles de la feuille :
+# chaque identifiant a ete verifie contre les produits qui le portent. Quatre
+# associations etaient inversees et cinq manquaient — d ou du the et des noix
+# classes sous « Auto », des jouets sous « Mode », et une page Auto vide pendant
+# que les vraies pieces d auto tombaient dans « Autres aubaines ».
 CATEGORIES = {
-    "6205517011": "Mode",
-    "21204935011": "Mode",
-    "2206275011": "Maison et cuisine",
-    "3006902011": "Outils et bricolage",
-    "6205499011": "Sports et plein air",
-    "2242989011": "Sports et plein air",
-    "6967215011": "Auto",
-    "667823011": "Électronique",
-    "3198031": "Électronique",
-    "6205511011": "Jouets et jeux",
+    # --- verifies, inchanges ---------------------------------------------
+    "21204935011": "Mode",                 # Vetements, chaussures et bijoux (172 art.)
+    "3006902011":  "Outils et bricolage",  # Outils et renovation (62 art.)
+    "2206275011":  "Maison et cuisine",    # Maison et cuisine (53 art.)
+    "2242989011":  "Sports et plein air",  # Sports et plein air (41 art.)
+    "667823011":   "Électronique",         # Électronique (27 art.)
+    "3198031":     "Électronique",         # Jeux video (4 art.)
+
+    # --- CORRIGES ---------------------------------------------------------
+    "6205517011":  "Jouets et jeux",       # etait « Mode » — c est Jouets et jeux (16 art.)
+    "6967215011":  "Aubaines",             # etait « Auto » — c est EPICERIE (8 art.)
+                                           #   <- la cause du the et des noix sous « Auto »
+    "6205511011":  "Aubaines",             # etait « Jouets » — c est Produits de bureau (42 art.)
+    "6205499011":  "Maison et cuisine",    # etait « Sports » — c est Terrasse, pelouse et jardin (11 art.)
+
+    # --- AJOUTS -----------------------------------------------------------
+    "6948389011":  "Auto",                 # Auto et moto — absent de la table : les 33 vraies
+                                           #   pieces d auto tombaient dans « Autres aubaines »
+    "2235620011":  "Mode",                 # Montres
+    "6205514011":  "Aubaines",             # Animalerie (22 art.)
+    "6205177011":  "Aubaines",             # Sante et soins personnels (21 art.)
+    "6205124011":  "Aubaines",             # Beaute (18 art.)
+    "3561346011":  "Aubaines",             # Bebe (3 art.)
 }
 
 # Pages catégories PERMANENTES (URL stables pour Google, contenu regénéré
@@ -373,6 +397,17 @@ def chips_html(active_slug: str = "") -> str:
     return '<nav class="chips">' + "".join(chips) + "</nav>"
 
 
+def guide_html(slug: str) -> str:
+    """Contenu editorial de la page categorie.
+
+    Place sous la grille : les aubaines restent au premier ecran, et Google
+    indexe le texte tout de meme. C est ce qui distingue une page categorie
+    d une simple liste de produits regeneree chaque matin.
+    """
+    texte = INTROS.get(slug)
+    return f'<section class="guide">{texte}</section>' if texte else ""
+
+
 def page_categorie(nom, slug, items, maj_lisible) -> str:
     lib = CATS_LIBELLES.get(nom, nom)
     desc = (f"Les meilleures aubaines Amazon « {lib} » au Québec, mises à jour chaque matin "
@@ -405,6 +440,7 @@ def page_categorie(nom, slug, items, maj_lisible) -> str:
 </section>
 {chips_html(slug)}
 {contenu}
+{guide_html(slug)}
 {formulaire_infolettre("aubaines")}
 </main>
 <footer>Mis à jour le {e(maj_lisible)} · <a href="{e(SITE_PRINCIPAL)}">chasseursdedealsqc.com</a>
@@ -622,6 +658,13 @@ border-radius:10px;font-size:16px}
 .fil{color:#8496a8;font-size:13px;margin-bottom:14px}
 .fil a{color:#8496a8}
 footer{text-align:center;color:#8496a8;font-size:13px;padding:26px}
+.guide{max-width:760px;margin:34px auto 0;padding:0 4px;line-height:1.75;color:#c9d6e2}
+.guide h2{font-size:20px;margin:26px 0 10px;color:#fff}
+.guide h3{font-size:16px;margin:20px 0 8px;color:#fff}
+.guide p{margin:0 0 14px}
+.guide ul{margin:0 0 14px;padding-left:20px}
+.guide li{margin:0 0 8px}
+.guide strong{color:#fff}
 footer a{color:#8496a8}
 .chips{display:flex;flex-wrap:wrap;gap:8px;margin:14px 0 6px}
 .chip{background:#fff;color:#1a2230;border:1px solid #d7dee6;padding:7px 14px;
