@@ -92,6 +92,19 @@ ROUGE_CANDIDATS = 150             # ASIN examines par cycle (1 jeton Keepa chacu
 ROUGE_MAX = 36                    # affiches sur la page
 ROUGE_LOT = 100                   # ASIN par appel /product
 
+# Amazon Warehouse : retours clients revendus a rabais par Amazon lui-meme.
+# Ce sont de VRAIES baisses de prix, pas des prix conseilles gonfles — mais ce
+# sont des articles d occasion, d ou leur section a part et l etat affiche sur
+# chaque carte. On exclut l etat « acceptable », visiblement use, qui genere
+# l essentiel des deceptions.
+KEEPA_DEAL_URL = "https://api.keepa.com/deal"
+WH_ETATS = {2: "Comme neuf", 3: "Très bon état", 4: "Bon état",
+            5: "État acceptable", 0: "État non précisé"}
+WH_ETATS_VOULUS = [2, 3, 4]
+WH_RABAIS_MIN = 15
+WH_MAX = 24
+KC_WAREHOUSE = 9
+
 # Indices des series de prix Keepa (voir la documentation « csv »).
 KC_AMAZON, KC_NEUF, KC_RANG, KC_PRIX_CONSEILLE = 0, 1, 3, 4
 KC_NOTE, KC_AVIS, KC_BOITE_ACHAT = 16, 17, 18
@@ -503,6 +516,86 @@ def lire_prix_rouges(exclure: set) -> list:
     rouges = appliquer_traductions(rouges)
     print(f"  prix rouges : {len(rouges)} affiches")
     return rouges, mention
+
+
+def lire_warehouse(exclure: set) -> list:
+    """Aubaines Amazon Warehouse : retours clients revendus par Amazon.
+
+    Le rabais est calcule par rapport au prix du NEUF plutot que par rapport a
+    l historique du prix Warehouse : c est la comparaison qui interesse
+    l acheteur — « 45 $ au lieu de 80 $ neuf » — et c est verifiable sur la
+    fiche Amazon. L etat de l article est affiche sur chaque carte : vendre de
+    l occasion sans le dire serait le meilleur moyen de perdre la confiance
+    qu on essaie de construire.
+    """
+    cle = os.environ.get("KEEPA_API_KEY", "").strip()
+    if not cle:
+        return []
+    selection = {
+        "page": 0,
+        "domainId": KEEPA_DOMAINE,
+        "priceTypes": [KC_WAREHOUSE],
+        "warehouseConditions": WH_ETATS_VOULUS,
+        "deltaPercentRange": [WH_RABAIS_MIN, 100],
+        "salesRankRange": [1, 200000],
+        "minRating": 30,
+        "hasReviews": True,
+        "includeCategories": CATEGORIES_KEEPA,
+        "sortType": 4,
+        "isRangeEnabled": True,
+        "isFilterEnabled": True,
+    }
+    try:
+        r = requests.get(KEEPA_DEAL_URL, timeout=60,
+                         params={"key": cle, "selection": json.dumps(selection)})
+        r.raise_for_status()
+        brut = ((r.json().get("deals") or {}).get("dr")) or []
+    except (requests.RequestException, ValueError) as e:
+        print(f"  warehouse : lecture impossible ({type(e).__name__}), section ignoree")
+        return []
+
+    lots = []
+    for d in brut:
+        asin = (d.get("asin") or "").strip()
+        if not re.fullmatch(r"[A-Z0-9]{10}", asin) or asin in exclure:
+            continue
+        courant = d.get("current") or []
+        prix = courant[KC_WAREHOUSE] if len(courant) > KC_WAREHOUSE else -1
+        neuf = courant[KC_NEUF] if len(courant) > KC_NEUF else -1
+        if prix <= 0:
+            continue
+        if neuf > prix:
+            rabais = round(100 * (neuf - prix) / neuf)
+        else:                      # pas de prix neuf connu : on garde le delta Keepa
+            deltas = d.get("deltaPercent") or []
+            try:
+                rabais = int(deltas[1][KC_WAREHOUSE])
+            except (IndexError, TypeError, ValueError):
+                continue
+        if rabais < WH_RABAIS_MIN:
+            continue
+        etat = WH_ETATS.get(int(d.get("warehouseCondition") or 0), WH_ETATS[0])
+        lots.append({
+            "asin": asin,
+            "titre": (d.get("title") or "Aubaine").strip(),
+            "rabais": float(rabais),
+            "prix": prix / 100.0,
+            "neuf": neuf / 100.0 if neuf > 0 else None,
+            "etat": etat,
+            "note": (d.get("warehouseConditionComment") or "").strip(),
+            "lien": f"https://www.amazon.ca/dp/{asin}?tag={TAG_AFFILIE}",
+            "categorie": CATEGORIES.get(str(d.get("rootCat") or ""), "Aubaines"),
+            "img_keepa": "",
+        })
+
+    lots.sort(key=lambda x: x["rabais"], reverse=True)
+    for a in lots:
+        a["urls_image"] = urls_image(a)
+        a["image"] = a["urls_image"][0]
+    lots = garder_avec_photo(lots)[:WH_MAX]
+    lots = appliquer_traductions(lots)
+    print(f"  warehouse : {len(lots)} retenues sur {len(brut)} annoncees par Keepa")
+    return lots
 
 
 def charger_cache_trad() -> dict:
@@ -981,6 +1074,47 @@ def section_rouge_html(rouges, mention=None) -> str:
 </section>"""
 
 
+def section_warehouse_html(lots) -> str:
+    """Bloc Amazon Warehouse.
+
+    L etat de l article figure sur chaque carte, et le prix du neuf est rappele
+    barre a cote du prix Warehouse : le visiteur sait exactement ce qu il
+    achete et a quoi il le compare. Lien direct vers Amazon, comme pour les
+    offres eclair — un article Warehouse est souvent unique, lui fabriquer une
+    page reviendrait a semer des liens morts.
+    """
+    if not lots:
+        return ""
+    morceaux = []
+    for o in lots:
+        neuf = ""
+        if o.get("neuf"):
+            montant = f"{o['neuf']:.2f}".replace(".", ",")
+            neuf = f'<span class="neuf">au lieu de {e(montant)} $ neuf</span>'
+        morceaux.append(f"""<a class="carte entrepot" href="{e(o['lien'])}"
+ rel="nofollow sponsored noopener" target="_blank">
+<img src="{e(o['image'])}" alt="{e(o['titre'])}" loading="lazy"
+ onload="if(this.naturalWidth<2)this.closest('.carte').remove()"
+ onerror="this.closest('.carte').remove()">
+<span class="rabais">\u2212{round(o['rabais'])} %</span>
+<span class="cat">\U0001F4E6 {e(o['etat'])}</span>
+<span class="t">{e(o['titre'][:70])}</span>
+<span class="p">{e(prix_txt(o))}</span>
+{neuf}</a>""")
+    cartes = "\n".join(morceaux)
+
+    return f"""<section class="bloc-entrepot">
+<h2>📦 Amazon Warehouse — des retours à petit prix</h2>
+<p class="sous">Des articles retournés par d'autres clients, vérifiés et revendus
+par Amazon à rabais. <strong>Ce sont de vraies baisses de prix</strong>, pas des
+prix conseillés gonflés — l'écart affiché est calculé sur le prix du neuf.
+En échange, ce sont des articles d'occasion : l'état est indiqué sur chaque
+carte, et la garantie de retour de 30 jours d'Amazon s'applique quand même.
+Souvent un seul exemplaire disponible, donc ça part vite.</p>
+<section class="grille entrepots">{cartes}</section>
+</section>"""
+
+
 def chips_html(active_slug: str = "") -> str:
     chips = []
     for nom, slug in CATS_PAGES:
@@ -1041,10 +1175,12 @@ def page_categorie(nom, slug, items, maj_lisible) -> str:
 </body></html>"""
 
 
-def page_index(aubaines, maj_iso, maj_lisible, eclairs=(), rouges=(), mention_rouge=None) -> str:
+def page_index(aubaines, maj_iso, maj_lisible, eclairs=(), rouges=(), mention_rouge=None,
+               entrepot=()) -> str:
     cartes = cartes_html(aubaines)
     bloc_eclair = section_eclair_html(eclairs)
     bloc_rouge = section_rouge_html(rouges, mention_rouge)
+    bloc_entrepot = section_warehouse_html(entrepot)
     desc = ("Les meilleures aubaines Amazon du jour au Québec, mises à jour chaque matin. "
             "Rabais vérifiés, une page par aubaine. Par Chasseurs de Deals Québec.")
     return f"""<!doctype html>
@@ -1075,6 +1211,7 @@ Clique une aubaine pour la voir — et suis notre
 <a href="{e(PAGE_FACEBOOK)}" rel="noopener">page Facebook</a> pour ne rien manquer.</p>
 </section>
 {bloc_eclair}
+{bloc_entrepot}
 {bloc_rouge}
 {chips_html()}
 <div class="recherche"><input type="search" id="q" placeholder="🔎 Rechercher un produit… (nom, marque, catégorie)"
@@ -1255,6 +1392,13 @@ border-radius:10px;font-size:16px}
 .fil{color:#8496a8;font-size:13px;margin-bottom:14px}
 .fil a{color:#8496a8}
 footer{text-align:center;color:#8496a8;font-size:13px;padding:26px}
+.bloc-entrepot{margin:26px 0 6px;padding:18px 4px 4px;border-top:1px solid #26303a;border-bottom:1px solid #26303a}
+.bloc-entrepot h2{font-size:21px;margin:0 0 6px;color:#7fd1b9}
+.bloc-entrepot .sous{margin:0 0 16px;color:#8496a8;font-size:14px;line-height:1.6;max-width:700px}
+.bloc-entrepot .sous strong{color:#c9d6e2}
+.carte.entrepot{box-shadow:0 0 0 1px #7fd1b944}
+.carte.entrepot .cat{color:#7fd1b9}
+.carte.entrepot .neuf{display:block;margin-top:3px;font-size:12px;color:#8496a8;text-decoration:line-through}
 .bloc-rouge{margin:26px 0 6px;padding:18px 4px 4px;border-top:1px solid #26303a;border-bottom:1px solid #26303a}
 .bloc-rouge h2{font-size:21px;margin:0 0 6px;color:#ff6b6b}
 .bloc-rouge .sous{margin:0 0 16px;color:#8496a8;font-size:14px;line-height:1.6;max-width:680px}
@@ -1516,6 +1660,7 @@ def main() -> int:
     # Offres eclair : hors du flux habituel, affichees a part sur l accueil.
     eclairs = lire_offres_eclair({a["asin"] for a in aubaines})
     # Prix rouges : sous le prix conseille ET au plus bas depuis 90 jours.
+    entrepot = lire_warehouse({a["asin"] for a in aubaines} | {o["asin"] for o in eclairs})
     rouges, mention_rouge = lire_prix_rouges(
         {a["asin"] for a in aubaines} | {o["asin"] for o in eclairs})
     if not aubaines:
@@ -1540,7 +1685,7 @@ def main() -> int:
     (SORTIE / "infolettre.html").write_text(
         infolettre_html(aubaines, maj_lisible), encoding="utf-8")
 
-    (SORTIE / "index.html").write_text(page_index(aubaines, maj_iso, maj_lisible, eclairs, rouges, mention_rouge), encoding="utf-8")
+    (SORTIE / "index.html").write_text(page_index(aubaines, maj_iso, maj_lisible, eclairs, rouges, mention_rouge, entrepot), encoding="utf-8")
     (SORTIE / "divulgation.html").write_text(page_divulgation(maj_lisible), encoding="utf-8")
     jour = datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d")
     archives = fusionner_archive(charger_archive(), aubaines, jour)
