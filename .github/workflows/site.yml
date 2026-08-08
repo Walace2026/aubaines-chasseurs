@@ -5,7 +5,12 @@ name: Aubaines - generation quotidienne
 
 on:
   schedule:
-    - cron: "20 9 * * *"   # 5 h 20 HAE = 9 h 20 UTC ; ajuster selon l'heure d'ete/hiver
+    # Trois passages par jour, pour attraper les offres eclair d'Amazon qui ne
+    # durent que quelques heures. Heures UTC ; en HAE (UTC-4) cela donne
+    # 5 h 20, midi et 17 h. A decaler d'une heure au passage a l'heure d'hiver.
+    - cron: "20 9 * * *"    # 5 h 20 — juste apres la reconstruction Make de 5 h
+    - cron: "0 16 * * *"    # midi   — les offres eclair du matin
+    - cron: "0 21 * * *"    # 17 h   — celles de l'apres-midi, avant la soiree
   workflow_dispatch:        # bouton pour lancer a la main
 
 permissions:
@@ -32,6 +37,7 @@ jobs:
         env:
           ONESIGNAL_REST_API_KEY: ${{ secrets.ONESIGNAL_REST_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          KEEPA_API_KEY: ${{ secrets.KEEPA_API_KEY }}
       - name: Conserver l'archive et le cache de traductions
         run: |
           if [ -n "$(git status --porcelain archive.json traductions.json)" ]; then
