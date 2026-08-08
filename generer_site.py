@@ -695,7 +695,27 @@ def lire_aubaines() -> list:
     return retenues[:NB_AUBAINES]
 
 
-_NOM_IMAGE = re.compile(r"^[A-Za-z0-9%2B/=_+-]{6,120}\.(?:jpg|jpeg|png)$", re.IGNORECASE)
+_NOM_IMAGE = re.compile(r"^[A-Za-z0-9_+-]{6,80}\.(?:jpg|jpeg|png)$", re.IGNORECASE)
+
+
+def nom_image_keepa(brut: str):
+    """Nom de fichier de l image, tel que Keepa le renvoie.
+
+    Keepa transporte ce nom sous forme de tableau d octets. Le scenario Make
+    l ecrit donc dans la feuille en codes decimaux separes par des tirets
+    (« 52-49-117-... »). On le rend ici a sa forme lisible, « 41uvDx3VrcL.jpg ».
+    Une valeur deja lisible est acceptee telle quelle, et tout ce qui ne
+    ressemble pas a un nom de fichier est ignore sans bruit.
+    """
+    brut = (brut or "").strip()
+    if not brut:
+        return None
+    if re.fullmatch(r"\d{1,3}(?:-\d{1,3})+", brut):
+        try:
+            brut = bytes(int(o) for o in brut.split("-")).decode("ascii")
+        except (ValueError, UnicodeDecodeError):
+            return None
+    return brut if _NOM_IMAGE.match(brut) else None
 
 
 def urls_image(a) -> list:
@@ -708,8 +728,8 @@ def urls_image(a) -> list:
     ecartees faute de photo.
     """
     urls = []
-    nom = (a.get("img_keepa") or "").strip()
-    if nom and _NOM_IMAGE.match(nom):
+    nom = nom_image_keepa(a.get("img_keepa"))
+    if nom:
         urls.append(f"https://m.media-amazon.com/images/I/{nom}")
     urls.append(
         f"https://images-na.ssl-images-amazon.com/images/P/{a['asin']}.01._SCLZZZZZZZ_.jpg")
