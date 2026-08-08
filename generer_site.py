@@ -355,16 +355,21 @@ def lire_offres_eclair(exclure: set) -> list:
     return offres
 
 
-def _prix_utile(serie) -> int:
-    """Premier prix exploitable d une serie Keepa : boite d achat, Amazon, neuf."""
+def _indice_prix(serie):
+    """Indice du premier prix exploitable : boite d achat, Amazon, puis neuf.
+
+    On renvoie l INDICE et non la valeur, pour pouvoir lire la moyenne 90 jours
+    au meme indice. Comparer un prix de boite d achat a une moyenne « Amazon »
+    n aurait aucun sens et laisserait passer de faux bas prix.
+    """
     for i in (KC_BOITE_ACHAT, KC_AMAZON, KC_NEUF):
         try:
             v = serie[i]
         except (IndexError, TypeError):
             continue
         if isinstance(v, int) and v > 0:
-            return v
-    return -1
+            return i
+    return None
 
 
 def lire_prix_rouges(exclure: set) -> list:
@@ -420,19 +425,29 @@ def lire_prix_rouges(exclure: set) -> list:
             print(f"  prix rouges : lot ignore ({type(e).__name__})")
 
     rouges = []
+    ecarte = {"prix": 0, "conseille": 0, "rabais": 0, "moyenne": 0}
     for p in produits:
         stats = p.get("stats") or {}
-        courant, moyennes = stats.get("current") or [], stats.get("avg90") or []
-        prix = _prix_utile(courant)
+        courant = stats.get("current") or []
+        moyennes = stats.get("avg90") or []
+        i = _indice_prix(courant)
+        if i is None:
+            ecarte["prix"] += 1
+            continue
+        prix = courant[i]
         conseille = courant[KC_PRIX_CONSEILLE] if len(courant) > KC_PRIX_CONSEILLE else -1
-        if prix <= 0 or conseille <= 0 or conseille <= prix:
+        if conseille <= 0 or conseille <= prix:
+            ecarte["conseille"] += 1
             continue
         rabais = round(100 * (conseille - prix) / conseille)
         if rabais < ROUGE_RABAIS_MIN:
+            ecarte["rabais"] += 1
             continue
-        moyenne = _prix_utile(moyennes)
+        # Meme indice des deux cotes : on compare bien le prix a SA moyenne.
+        moyenne = moyennes[i] if len(moyennes) > i else -1
         if moyenne > 0 and prix > moyenne:
-            continue                        # garde-fou verifie une seconde fois
+            ecarte["moyenne"] += 1
+            continue
         asin = p.get("asin") or ""
         rouges.append({
             "asin": asin,
@@ -445,10 +460,16 @@ def lire_prix_rouges(exclure: set) -> list:
             "image": f"https://images-na.ssl-images-amazon.com/images/P/{asin}.01._SCLZZZZZZZ_.jpg",
         })
 
+    print(f"  prix rouges : {len(produits)} candidats — "
+          f"{ecarte['prix']} sans prix, {ecarte['conseille']} sans prix conseille, "
+          f"{ecarte['rabais']} sous {ROUGE_RABAIS_MIN} %, "
+          f"{ecarte['moyenne']} au-dessus de leur moyenne 90 j, "
+          f"{len(rouges)} candidats retenus")
+
     rouges.sort(key=lambda x: x["rabais"], reverse=True)
     rouges = garder_avec_photo(rouges)[:ROUGE_MAX]
     rouges = appliquer_traductions(rouges)
-    print(f"  prix rouges : {len(rouges)} retenus sur {len(produits)} candidats examines")
+    print(f"  prix rouges : {len(rouges)} affiches")
     return rouges
 
 
