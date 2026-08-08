@@ -98,6 +98,12 @@ ROUGE_LOT = 100                   # ASIN par appel /product
 # chaque carte. On exclut l etat « acceptable », visiblement use, qui genere
 # l essentiel des deceptions.
 KEEPA_DEAL_URL = "https://api.keepa.com/deal"
+KEEPA_TOKEN_URL = "https://api.keepa.com/token"
+# Attente maximale, en secondes, pour laisser les jetons Keepa se recharger.
+# La recharge est de 20 jetons/min : 150 s couvrent un decouvert d une
+# cinquantaine de jetons, ce qui est l ordre de grandeur observe apres
+# plusieurs generations rapprochees.
+KEEPA_ATTENTE_MAX = 150
 WH_ETATS = {2: "Comme neuf", 3: "Très bon état", 4: "Bon état",
             5: "État acceptable", 0: "État non précisé"}
 WH_ETATS_VOULUS = [2, 3, 4]
@@ -345,6 +351,37 @@ def detail_erreur_keepa(e) -> str:
     return f"HTTP {r.status_code}{bout}"
 
 
+def keepa_get(url: str, params: dict, timeout: int = 60):
+    """Appel Keepa qui attend la recharge des jetons au lieu d abandonner.
+
+    Keepa ne facture pas a l appel mais au debit : le compte peut passer sous
+    zero, et tant qu il y reste, chaque requete revient en 429. Le corps de la
+    reponse dit exactement combien de temps attendre. On l ecoute plutot que de
+    perdre la section pour la journee — la recharge est de vingt jetons la
+    minute, donc l attente se compte en dizaines de secondes.
+
+    Le plafond de KEEPA_ATTENTE_MAX secondes existe pour ne pas immobiliser le
+    runner : si le decouvert est profond, on renonce et on reessaiera a la
+    prochaine generation, dans quelques heures.
+    """
+    reste = KEEPA_ATTENTE_MAX
+    while True:
+        r = requests.get(url, timeout=timeout, params=params)
+        if r.status_code != 429:
+            r.raise_for_status()
+            return r
+        pause = 10
+        try:
+            pause = max(2, min(60, round((r.json().get("refillIn") or 0) / 1000) + 2))
+        except ValueError:
+            pass
+        if pause > reste:
+            r.raise_for_status()      # leve HTTPError, le journal dira pourquoi
+        print(f"  jetons Keepa epuises, pause de {pause} s puis nouvel essai")
+        time.sleep(pause)
+        reste -= pause
+
+
 def journal_jetons_keepa() -> None:
     """Note l etat du compte Keepa au debut de la generation.
 
@@ -356,9 +393,7 @@ def journal_jetons_keepa() -> None:
     if not cle:
         return
     try:
-        r = requests.get("https://api.keepa.com/token", timeout=20,
-                         params={"key": cle})
-        j = r.json()
+        j = requests.get(KEEPA_TOKEN_URL, timeout=20, params={"key": cle}).json()
     except (requests.RequestException, ValueError) as e:
         print(f"  jetons Keepa : etat inconnu ({type(e).__name__})")
         return
@@ -383,9 +418,8 @@ def lire_offres_eclair(exclure: set) -> list:
         print("  offres eclair : KEEPA_API_KEY absente, section ignoree")
         return []
     try:
-        r = requests.get(KEEPA_ECLAIR_URL, timeout=45,
-                         params={"key": cle, "domain": KEEPA_DOMAINE})
-        r.raise_for_status()
+        r = keepa_get(KEEPA_ECLAIR_URL,
+                      {"key": cle, "domain": KEEPA_DOMAINE}, timeout=45)
         brut = r.json().get("lightningDeals") or []
     except (requests.RequestException, ValueError) as e:
         print(f"  offres eclair : lecture impossible ({detail_erreur_keepa(e)}), section ignoree")
@@ -611,9 +645,8 @@ def lire_warehouse(exclure: set) -> list:
         "isFilterEnabled": True,
     }
     try:
-        r = requests.get(KEEPA_DEAL_URL, timeout=60,
-                         params={"key": cle, "selection": json.dumps(selection)})
-        r.raise_for_status()
+        r = keepa_get(KEEPA_DEAL_URL,
+                      {"key": cle, "selection": json.dumps(selection)}, timeout=60)
         brut = ((r.json().get("deals") or {}).get("dr")) or []
     except (requests.RequestException, ValueError) as e:
         print(f"  warehouse : lecture impossible ({detail_erreur_keepa(e)}), section ignoree")
