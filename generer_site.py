@@ -27,6 +27,7 @@ import io
 import os
 import re
 import sys
+import time
 import unicodedata
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
@@ -64,6 +65,17 @@ TRAD_URLS = [
     f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/gviz/tq?tqx=out:csv&sheet=Traductions",
     f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&sheet=Traductions",
 ]
+
+# Offres eclair Amazon, via le point d acces /lightningdeal de Keepa.
+# Keepa les rafraichit toutes les 10 minutes ; le site est regenere trois fois
+# par jour, ce qui suffit pour en attraper la majorite avant leur expiration.
+# La cle vit dans les secrets GitHub : ce depot est public.
+KEEPA_ECLAIR_URL = "https://api.keepa.com/lightningdeal"
+KEEPA_DOMAINE = 6                 # 6 = Amazon.ca
+TAG_AFFILIE = "dtlinformat0f-20"
+ECLAIR_RABAIS_MIN = 10            # sous ce seuil, ce n est pas une aubaine
+ECLAIR_MAX = 24                   # on garde la section courte et lisible
+EPOQUE_KEEPA = 21564000           # minutes Keepa -> minutes Unix
 
 # Adresses publiques.
 DOMAINE = "https://aubaines.chasseursdedealsqc.com"
@@ -256,6 +268,66 @@ def choisir_moins_cher(items: list) -> dict:
     if avec_prix:
         return min(avec_prix, key=lambda x: x["prix"])
     return max(items, key=lambda x: x["rabais"])
+
+
+def heure_keepa(minutes: int) -> int:
+    """Minutes Keepa -> secondes Unix."""
+    return (int(minutes) + EPOQUE_KEEPA) * 60
+
+
+def lire_offres_eclair(exclure: set) -> list:
+    """Offres eclair Amazon.ca en cours, via Keepa.
+
+    Ces offres-la n apparaissent pas dans le flux habituel : Keepa compare au
+    prix recent, et une offre eclair porte souvent sur un article dont le prix
+    courant n a pas bouge depuis des semaines. C est pourtant le genre de
+    rabais que les gens cherchent, avec l urgence en prime.
+
+    Sans cle KEEPA_API_KEY, la fonction renvoie une liste vide : le site se
+    genere exactement comme avant.
+    """
+    cle = os.environ.get("KEEPA_API_KEY", "").strip()
+    if not cle:
+        print("  offres eclair : KEEPA_API_KEY absente, section ignoree")
+        return []
+    try:
+        r = requests.get(KEEPA_ECLAIR_URL, timeout=45,
+                         params={"key": cle, "domain": KEEPA_DOMAINE})
+        r.raise_for_status()
+        brut = r.json().get("lightningDeals") or []
+    except (requests.RequestException, ValueError) as e:
+        print(f"  offres eclair : lecture impossible ({type(e).__name__}), section ignoree")
+        return []
+
+    maintenant = int(time.time())
+    offres = []
+    for d in brut:
+        asin = (d.get("asin") or "").strip()
+        prix = d.get("dealPrice") or 0
+        rabais = d.get("percentOff") or 0
+        fin = heure_keepa(d.get("endTime") or 0)
+        if not re.fullmatch(r"[A-Z0-9]{10}", asin) or asin in exclure:
+            continue
+        if d.get("dealState") != "AVAILABLE" or prix <= 0:
+            continue
+        if rabais < ECLAIR_RABAIS_MIN or fin <= maintenant + 600:
+            continue          # moins de 10 min restantes : inutile de l afficher
+        offres.append({
+            "asin": asin,
+            "titre": (d.get("title") or "Aubaine").strip(),
+            "rabais": float(rabais),
+            "prix": prix / 100.0,
+            "lien": f"https://www.amazon.ca/dp/{asin}?tag={TAG_AFFILIE}",
+            "categorie": "Offre eclair",
+            "fin": fin,
+            "image": f"https://images-na.ssl-images-amazon.com/images/P/{asin}.01._SCLZZZZZZZ_.jpg",
+        })
+
+    offres.sort(key=lambda x: x["rabais"], reverse=True)
+    offres = garder_avec_photo(offres)[:ECLAIR_MAX]
+    offres = appliquer_traductions(offres)
+    print(f"  offres eclair : {len(offres)} retenues sur {len(brut)} annoncees par Keepa")
+    return offres
 
 
 def charger_cache_trad() -> dict:
@@ -596,6 +668,54 @@ def cartes_html(aubaines) -> str:
 <span class="p">{e(prix_txt(a))}</span></a>""" for a in aubaines)
 
 
+def section_eclair_html(offres) -> str:
+    """Bandeau des offres eclair, au-dessus de la grille du jour.
+
+    Ces cartes pointent directement vers Amazon, contrairement aux autres :
+    une offre eclair vit quelques heures, lui fabriquer une page /aubaine/
+    reviendrait a semer des liens morts dans le site et dans l archive.
+
+    Le compte a rebours est calcule dans le navigateur a partir d un horodatage
+    Unix. Une offre qui expire pendant la visite disparait d elle-meme, sans
+    attendre la prochaine generation.
+    """
+    if not offres:
+        return ""
+    cartes = "\n".join(f"""<a class="carte eclair" href="{e(o['lien'])}"
+ rel="nofollow sponsored noopener" target="_blank" data-fin="{int(o['fin'])}">
+<img src="{e(o['image'])}" alt="{e(o['titre'])}" loading="lazy"
+ onload="if(this.naturalWidth<2)this.closest('.carte').remove()"
+ onerror="this.closest('.carte').remove()">
+<span class="rabais">−{round(o['rabais'])} %</span>
+<span class="cat">⚡ Offre éclair</span>
+<span class="t">{e(o['titre'][:70])}</span>
+<span class="p">{e(prix_txt(o))}</span>
+<span class="chrono">—</span></a>""" for o in offres)
+    return f"""<section class="bloc-eclair">
+<h2>⚡ Offres éclair en cours</h2>
+<p class="sous">Des rabais à durée limitée d'Amazon.ca, vérifiés il y a quelques minutes.
+Ils se terminent au compte à rebours indiqué — et repartent au prix normal ensuite.</p>
+<section class="grille eclairs">{cartes}</section>
+<script>
+(function(){{
+  var cartes=[].slice.call(document.querySelectorAll('.carte.eclair'));
+  function tic(){{
+    var maintenant=Date.now()/1000;
+    cartes.forEach(function(c){{
+      var reste=(+c.dataset.fin)-maintenant;
+      var z=c.querySelector('.chrono');
+      if(reste<=0){{c.style.display='none';return;}}
+      var h=Math.floor(reste/3600),m=Math.floor(reste%3600/60),s=Math.floor(reste%60);
+      z.textContent=h>0?('finit dans '+h+' h '+(m<10?'0':'')+m):
+                        ('finit dans '+m+' min '+(s<10?'0':'')+s);
+    }});
+  }}
+  tic();setInterval(tic,1000);
+}})();
+</script>
+</section>"""
+
+
 def chips_html(active_slug: str = "") -> str:
     chips = []
     for nom, slug in CATS_PAGES:
@@ -656,8 +776,9 @@ def page_categorie(nom, slug, items, maj_lisible) -> str:
 </body></html>"""
 
 
-def page_index(aubaines, maj_iso, maj_lisible) -> str:
+def page_index(aubaines, maj_iso, maj_lisible, eclairs=()) -> str:
     cartes = cartes_html(aubaines)
+    bloc_eclair = section_eclair_html(eclairs)
     desc = ("Les meilleures aubaines Amazon du jour au Québec, mises à jour chaque matin. "
             "Rabais vérifiés, une page par aubaine. Par Chasseurs de Deals Québec.")
     return f"""<!doctype html>
@@ -687,6 +808,7 @@ def page_index(aubaines, maj_iso, maj_lisible) -> str:
 Clique une aubaine pour la voir — et suis notre
 <a href="{e(PAGE_FACEBOOK)}" rel="noopener">page Facebook</a> pour ne rien manquer.</p>
 </section>
+{bloc_eclair}
 {chips_html()}
 <div class="recherche"><input type="search" id="q" placeholder="🔎 Rechercher un produit… (nom, marque, catégorie)"
  autocomplete="off"><span class="r-nb" id="qn"></span></div>
@@ -866,6 +988,13 @@ border-radius:10px;font-size:16px}
 .fil{color:#8496a8;font-size:13px;margin-bottom:14px}
 .fil a{color:#8496a8}
 footer{text-align:center;color:#8496a8;font-size:13px;padding:26px}
+.bloc-eclair{margin:26px 0 6px;padding:18px 4px 4px;border-top:1px solid #26303a;border-bottom:1px solid #26303a}
+.bloc-eclair h2{font-size:21px;margin:0 0 6px;color:#ffcc33}
+.bloc-eclair .sous{margin:0 0 16px;color:#8496a8;font-size:14px;line-height:1.6;max-width:640px}
+.carte.eclair{position:relative;box-shadow:0 0 0 1px #ffcc3355}
+.carte.eclair .cat{color:#ffcc33}
+.carte.eclair .chrono{display:block;margin-top:4px;font-size:12px;font-weight:600;color:#ff8a5b;
+ font-variant-numeric:tabular-nums}
 .guide{max-width:760px;margin:34px auto 0;padding:0 4px;line-height:1.75;color:#c9d6e2}
 .guide h2{font-size:20px;margin:26px 0 10px;color:#fff}
 .guide h3{font-size:16px;margin:20px 0 8px;color:#fff}
@@ -1107,6 +1236,9 @@ def page_divulgation(maj_lisible: str) -> str:
 
 def main() -> int:
     aubaines = lire_aubaines()
+
+    # Offres eclair : hors du flux habituel, affichees a part sur l accueil.
+    eclairs = lire_offres_eclair({a["asin"] for a in aubaines})
     if not aubaines:
         raise SystemExit("ERREUR : aucune aubaine lue — rien n'est généré (le site précédent reste en place).")
 
@@ -1129,7 +1261,7 @@ def main() -> int:
     (SORTIE / "infolettre.html").write_text(
         infolettre_html(aubaines, maj_lisible), encoding="utf-8")
 
-    (SORTIE / "index.html").write_text(page_index(aubaines, maj_iso, maj_lisible), encoding="utf-8")
+    (SORTIE / "index.html").write_text(page_index(aubaines, maj_iso, maj_lisible, eclairs), encoding="utf-8")
     (SORTIE / "divulgation.html").write_text(page_divulgation(maj_lisible), encoding="utf-8")
     jour = datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d")
     archives = fusionner_archive(charger_archive(), aubaines, jour)
