@@ -402,6 +402,21 @@ def lire_prix_rouges(exclure: set) -> list:
     L ordre compte : le garde-fou des 90 jours est applique cote serveur, donc
     on ne depense un jeton /product que sur des candidats deja credibles.
     """
+    # DESACTIVE PAR DEFAUT, et volontairement.
+    #
+    # Cette recherche coute une centaine de jetons Keepa par execution — un
+    # appel /query puis un /product par ASIN — et n a jamais rien produit :
+    # sur Amazon.ca le prix conseille egale presque toujours le prix de vente,
+    # donc il n y a pas d ecart a calculer. Les badges rouges que l on voyait
+    # sur les fiches etaient des prix Amazon Business, invisibles au public.
+    #
+    # Pire, ces jetons manquaient ensuite a Warehouse et aux offres eclair, qui
+    # ramenent de vrais produits. Le code reste en place : si Amazon se remet a
+    # publier des prix conseilles credibles, il suffit de poser la variable
+    # PRIX_ROUGES=1 dans le workflow pour le rallumer.
+    if os.environ.get("PRIX_ROUGES", "").strip() != "1":
+        return [], None
+
     cle = os.environ.get("KEEPA_API_KEY", "").strip()
     if not cle:
         return [], None
