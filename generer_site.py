@@ -75,6 +75,31 @@ KEEPA_DOMAINE = 6                 # 6 = Amazon.ca
 TAG_AFFILIE = "dtlinformat0f-20"
 ECLAIR_RABAIS_MIN = 10            # sous ce seuil, ce n est pas une aubaine
 ECLAIR_MAX = 24                   # on garde la section courte et lisible
+
+# Prix rouges : produits vendus sous le prix conseille du fabricant.
+# C est le pourcentage qu Amazon affiche en rouge sur ses fiches. Pris seul,
+# ce chiffre ne veut pas dire grand-chose : beaucoup d articles ne se vendent
+# jamais au prix conseille. On exige donc AUSSI que le prix courant soit egal
+# ou inferieur a sa moyenne des 90 derniers jours. Un produit qui passe les
+# deux conditions est reellement bon marche aujourd hui, pas seulement en
+# apparence.
+KEEPA_QUERY_URL = "https://api.keepa.com/query"
+KEEPA_PRODUIT_URL = "https://api.keepa.com/product"
+ROUGE_RABAIS_MIN = 25             # % minimum sous le prix conseille
+ROUGE_CANDIDATS = 300             # ASIN examines par cycle (1 jeton Keepa chacun)
+ROUGE_MAX = 36                    # affiches sur la page
+ROUGE_LOT = 100                   # ASIN par appel /product
+
+# Indices des series de prix Keepa (voir la documentation « csv »).
+KC_AMAZON, KC_NEUF, KC_RANG, KC_PRIX_CONSEILLE = 0, 1, 3, 4
+KC_NOTE, KC_AVIS, KC_BOITE_ACHAT = 16, 17, 18
+
+# Les memes categories racines que la requete Make quotidienne.
+CATEGORIES_KEEPA = [
+    667823011, 6205514011, 6948389011, 6205124011, 6967215011, 6205517011,
+    3198031, 2206275011, 21204935011, 2235620011, 3006902011, 6205511011,
+    6205177011, 2242989011, 6205499011, 3561346011,
+]
 EPOQUE_KEEPA = 21564000           # minutes Keepa -> minutes Unix
 
 # Adresses publiques.
@@ -328,6 +353,103 @@ def lire_offres_eclair(exclure: set) -> list:
     offres = appliquer_traductions(offres)
     print(f"  offres eclair : {len(offres)} retenues sur {len(brut)} annoncees par Keepa")
     return offres
+
+
+def _prix_utile(serie) -> int:
+    """Premier prix exploitable d une serie Keepa : boite d achat, Amazon, neuf."""
+    for i in (KC_BOITE_ACHAT, KC_AMAZON, KC_NEUF):
+        try:
+            v = serie[i]
+        except (IndexError, TypeError):
+            continue
+        if isinstance(v, int) and v > 0:
+            return v
+    return -1
+
+
+def lire_prix_rouges(exclure: set) -> list:
+    """Produits vendus sous leur prix conseille, et au plus bas depuis 90 jours.
+
+    Deux appels Keepa. Le premier, /query, laisse le serveur faire le gros du
+    tri : bonne categorie, bien classe, bien note, et surtout prix inferieur ou
+    egal a la moyenne des 90 derniers jours. Le second, /product, ramene les
+    prix reels pour calculer l ecart avec le prix conseille — c est le chiffre
+    qu Amazon affiche en rouge.
+
+    L ordre compte : le garde-fou des 90 jours est applique cote serveur, donc
+    on ne depense un jeton /product que sur des candidats deja credibles.
+    """
+    cle = os.environ.get("KEEPA_API_KEY", "").strip()
+    if not cle:
+        return []
+
+    selection = {
+        "categories_include": CATEGORIES_KEEPA,
+        "current_LISTPRICE_gte": 500,       # au moins 5 $ de prix conseille
+        "current_SALES_lte": 200000,
+        "current_RATING_gte": 30,
+        "current_COUNT_REVIEWS_gte": 5,
+        "deltaPercent90_AMAZON_lte": 0,     # <- le garde-fou : pas au-dessus
+        "singleVariation": True,            #    de sa moyenne de 90 jours
+        "sort": [["current_SALES", "asc"]],
+        "perPage": ROUGE_CANDIDATS,
+        "page": 0,
+    }
+    try:
+        r = requests.get(KEEPA_QUERY_URL, timeout=60,
+                         params={"key": cle, "domain": KEEPA_DOMAINE,
+                                 "selection": json.dumps(selection)})
+        r.raise_for_status()
+        asins = [a for a in (r.json().get("asinList") or [])
+                 if re.fullmatch(r"[A-Z0-9]{10}", a or "") and a not in exclure]
+    except (requests.RequestException, ValueError) as e:
+        print(f"  prix rouges : recherche impossible ({type(e).__name__}), section ignoree")
+        return []
+
+    asins = asins[:ROUGE_CANDIDATS]
+    produits = []
+    for i in range(0, len(asins), ROUGE_LOT):
+        lot = asins[i:i + ROUGE_LOT]
+        try:
+            r = requests.get(KEEPA_PRODUIT_URL, timeout=90,
+                             params={"key": cle, "domain": KEEPA_DOMAINE,
+                                     "asin": ",".join(lot), "stats": 90})
+            r.raise_for_status()
+            produits.extend(r.json().get("products") or [])
+        except (requests.RequestException, ValueError) as e:
+            print(f"  prix rouges : lot ignore ({type(e).__name__})")
+
+    rouges = []
+    for p in produits:
+        stats = p.get("stats") or {}
+        courant, moyennes = stats.get("current") or [], stats.get("avg90") or []
+        prix = _prix_utile(courant)
+        conseille = courant[KC_PRIX_CONSEILLE] if len(courant) > KC_PRIX_CONSEILLE else -1
+        if prix <= 0 or conseille <= 0 or conseille <= prix:
+            continue
+        rabais = round(100 * (conseille - prix) / conseille)
+        if rabais < ROUGE_RABAIS_MIN:
+            continue
+        moyenne = _prix_utile(moyennes)
+        if moyenne > 0 and prix > moyenne:
+            continue                        # garde-fou verifie une seconde fois
+        asin = p.get("asin") or ""
+        rouges.append({
+            "asin": asin,
+            "titre": (p.get("title") or "Aubaine").strip(),
+            "rabais": float(rabais),
+            "prix": prix / 100.0,
+            "conseille": conseille / 100.0,
+            "lien": f"https://www.amazon.ca/dp/{asin}?tag={TAG_AFFILIE}",
+            "categorie": CATEGORIES.get(str(p.get("rootCategory") or ""), "Aubaines"),
+            "image": f"https://images-na.ssl-images-amazon.com/images/P/{asin}.01._SCLZZZZZZZ_.jpg",
+        })
+
+    rouges.sort(key=lambda x: x["rabais"], reverse=True)
+    rouges = garder_avec_photo(rouges)[:ROUGE_MAX]
+    rouges = appliquer_traductions(rouges)
+    print(f"  prix rouges : {len(rouges)} retenus sur {len(produits)} candidats examines")
+    return rouges
 
 
 def charger_cache_trad() -> dict:
@@ -716,6 +838,38 @@ Ils se terminent au compte à rebours indiqué — et repartent au prix normal e
 </section>"""
 
 
+def section_rouge_html(rouges) -> str:
+    """Bloc « Sous le prix conseillé ».
+
+    Le pourcentage affiché est celui qu'Amazon montre en rouge sur sa fiche,
+    donc le visiteur retrouve le même chiffre en arrivant là-bas. La mention
+    du prix conseillé est explicite : on ne fait pas passer une remise
+    théorique pour une baisse de prix.
+    """
+    if not rouges:
+        return ""
+    cartes = "\n".join(f"""<a class="carte rouge" href="{e(o['lien'])}"
+ rel="nofollow sponsored noopener" target="_blank">
+<img src="{e(o['image'])}" alt="{e(o['titre'])}" loading="lazy"
+ onload="if(this.naturalWidth<2)this.closest('.carte').remove()"
+ onerror="this.closest('.carte').remove()">
+<span class="rabais">−{round(o['rabais'])} %</span>
+<span class="cat">🔻 {e(o['categorie'])}</span>
+<span class="t">{e(o['titre'][:70])}</span>
+<span class="p">{e(prix_txt(o))}</span>
+<span class="conseille">au lieu de {e(f"{o['conseille']:.2f}".replace(".", ","))} $</span></a>"""
+        for o in rouges)
+    return f"""<section class="bloc-rouge">
+<h2>🔻 Sous le prix conseillé</h2>
+<p class="sous">Les produits que tu vois affichés en rouge sur Amazon.
+Le pourcentage est celui d'Amazon, calculé sur le prix conseillé du fabricant —
+et on ne garde que ceux dont le prix est <strong>aussi égal ou inférieur à sa
+moyenne des 90 derniers jours</strong>. Autrement dit : la remise annoncée est
+là, et le prix est réellement bas en ce moment.</p>
+<section class="grille rouges">{cartes}</section>
+</section>"""
+
+
 def chips_html(active_slug: str = "") -> str:
     chips = []
     for nom, slug in CATS_PAGES:
@@ -776,9 +930,10 @@ def page_categorie(nom, slug, items, maj_lisible) -> str:
 </body></html>"""
 
 
-def page_index(aubaines, maj_iso, maj_lisible, eclairs=()) -> str:
+def page_index(aubaines, maj_iso, maj_lisible, eclairs=(), rouges=()) -> str:
     cartes = cartes_html(aubaines)
     bloc_eclair = section_eclair_html(eclairs)
+    bloc_rouge = section_rouge_html(rouges)
     desc = ("Les meilleures aubaines Amazon du jour au Québec, mises à jour chaque matin. "
             "Rabais vérifiés, une page par aubaine. Par Chasseurs de Deals Québec.")
     return f"""<!doctype html>
@@ -809,6 +964,7 @@ Clique une aubaine pour la voir — et suis notre
 <a href="{e(PAGE_FACEBOOK)}" rel="noopener">page Facebook</a> pour ne rien manquer.</p>
 </section>
 {bloc_eclair}
+{bloc_rouge}
 {chips_html()}
 <div class="recherche"><input type="search" id="q" placeholder="🔎 Rechercher un produit… (nom, marque, catégorie)"
  autocomplete="off"><span class="r-nb" id="qn"></span></div>
@@ -988,6 +1144,13 @@ border-radius:10px;font-size:16px}
 .fil{color:#8496a8;font-size:13px;margin-bottom:14px}
 .fil a{color:#8496a8}
 footer{text-align:center;color:#8496a8;font-size:13px;padding:26px}
+.bloc-rouge{margin:26px 0 6px;padding:18px 4px 4px;border-top:1px solid #26303a;border-bottom:1px solid #26303a}
+.bloc-rouge h2{font-size:21px;margin:0 0 6px;color:#ff6b6b}
+.bloc-rouge .sous{margin:0 0 16px;color:#8496a8;font-size:14px;line-height:1.6;max-width:680px}
+.bloc-rouge .sous strong{color:#c9d6e2}
+.carte.rouge{box-shadow:0 0 0 1px #ff6b6b44}
+.carte.rouge .cat{color:#ff6b6b}
+.carte.rouge .conseille{display:block;margin-top:3px;font-size:12px;color:#8496a8;text-decoration:line-through}
 .bloc-eclair{margin:26px 0 6px;padding:18px 4px 4px;border-top:1px solid #26303a;border-bottom:1px solid #26303a}
 .bloc-eclair h2{font-size:21px;margin:0 0 6px;color:#ffcc33}
 .bloc-eclair .sous{margin:0 0 16px;color:#8496a8;font-size:14px;line-height:1.6;max-width:640px}
@@ -1239,6 +1402,8 @@ def main() -> int:
 
     # Offres eclair : hors du flux habituel, affichees a part sur l accueil.
     eclairs = lire_offres_eclair({a["asin"] for a in aubaines})
+    # Prix rouges : sous le prix conseille ET au plus bas depuis 90 jours.
+    rouges = lire_prix_rouges({a["asin"] for a in aubaines} | {o["asin"] for o in eclairs})
     if not aubaines:
         raise SystemExit("ERREUR : aucune aubaine lue — rien n'est généré (le site précédent reste en place).")
 
@@ -1261,7 +1426,7 @@ def main() -> int:
     (SORTIE / "infolettre.html").write_text(
         infolettre_html(aubaines, maj_lisible), encoding="utf-8")
 
-    (SORTIE / "index.html").write_text(page_index(aubaines, maj_iso, maj_lisible, eclairs), encoding="utf-8")
+    (SORTIE / "index.html").write_text(page_index(aubaines, maj_iso, maj_lisible, eclairs, rouges), encoding="utf-8")
     (SORTIE / "divulgation.html").write_text(page_divulgation(maj_lisible), encoding="utf-8")
     jour = datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d")
     archives = fusionner_archive(charger_archive(), aubaines, jour)
