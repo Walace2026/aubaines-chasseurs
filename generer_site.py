@@ -318,6 +318,55 @@ def heure_keepa(minutes: int) -> int:
     return (int(minutes) + EPOQUE_KEEPA) * 60
 
 
+def detail_erreur_keepa(e) -> str:
+    """Traduit une erreur Keepa en phrase utile dans le journal.
+
+    Sans ca, le journal disait seulement « HTTPError » et il fallait deviner.
+    Keepa repond 429 quand les jetons sont epuises, et le corps de la reponse
+    contient alors le nombre de jetons restants et le delai de recharge — c est
+    exactement ce qu on veut lire pour savoir s il faut attendre ou corriger.
+    """
+    r = getattr(e, "response", None)
+    if r is None:
+        return type(e).__name__
+    bout = ""
+    try:
+        j = r.json()
+        gauche = j.get("tokensLeft")
+        delai = j.get("refillIn")
+        if gauche is not None:
+            bout = f", jetons restants {gauche}"
+            if delai:
+                bout += f", recharge dans {round(delai / 1000)} s"
+        elif j.get("error"):
+            bout = f", {str(j['error'])[:120]}"
+    except ValueError:
+        bout = f", {r.text[:120].strip()}" if r.text else ""
+    return f"HTTP {r.status_code}{bout}"
+
+
+def journal_jetons_keepa() -> None:
+    """Note l etat du compte Keepa au debut de la generation.
+
+    Une ligne de journal qui coute un jeton et fait gagner une demi-heure de
+    diagnostic : quand une section manque, on sait tout de suite s il s agit du
+    budget de jetons ou d autre chose.
+    """
+    cle = os.environ.get("KEEPA_API_KEY", "").strip()
+    if not cle:
+        return
+    try:
+        r = requests.get("https://api.keepa.com/token", timeout=20,
+                         params={"key": cle})
+        j = r.json()
+    except (requests.RequestException, ValueError) as e:
+        print(f"  jetons Keepa : etat inconnu ({type(e).__name__})")
+        return
+    print("  jetons Keepa : {} disponibles, +{}/min, recharge dans {} s".format(
+        j.get("tokensLeft"), j.get("refillRate"),
+        round((j.get("refillIn") or 0) / 1000)))
+
+
 def lire_offres_eclair(exclure: set) -> list:
     """Offres eclair Amazon.ca en cours, via Keepa.
 
@@ -339,7 +388,7 @@ def lire_offres_eclair(exclure: set) -> list:
         r.raise_for_status()
         brut = r.json().get("lightningDeals") or []
     except (requests.RequestException, ValueError) as e:
-        print(f"  offres eclair : lecture impossible ({type(e).__name__}), section ignoree")
+        print(f"  offres eclair : lecture impossible ({detail_erreur_keepa(e)}), section ignoree")
         return []
 
     maintenant = int(time.time())
@@ -567,7 +616,7 @@ def lire_warehouse(exclure: set) -> list:
         r.raise_for_status()
         brut = ((r.json().get("deals") or {}).get("dr")) or []
     except (requests.RequestException, ValueError) as e:
-        print(f"  warehouse : lecture impossible ({type(e).__name__}), section ignoree")
+        print(f"  warehouse : lecture impossible ({detail_erreur_keepa(e)}), section ignoree")
         return []
 
     lots = []
@@ -1206,7 +1255,10 @@ def bloc_recherche(indice: str) -> str:
     bogue qu on a eu : la recherche ne trouvait que les huit cartes des deux
     bandeaux du haut et annoncait « 0 resultat » sur 1 006 produits.
     """
-    return f"""<div class="recherche"><input type="search" id="q"
+    # Chaine BRUTE (rf) : le bloc contient des expressions regulieres JavaScript
+    # (\\s+, \\u0300) qu il faut livrer telles quelles au navigateur. Sans le r,
+    # Python essayait de les interpreter et avertissait a chaque generation.
+    return rf"""<div class="recherche"><input type="search" id="q"
  placeholder="{e(indice)}" autocomplete="off"><span class="r-nb" id="qn"></span></div>
 <p class="r-vide" id="qv" hidden>Aucune aubaine ne correspond. Essaie un mot plus court —
 « casque » plutôt que « casque bluetooth sony ».</p>
@@ -1770,6 +1822,7 @@ def page_divulgation(maj_lisible: str) -> str:
 def main() -> int:
     aubaines = lire_aubaines()
 
+    journal_jetons_keepa()
     # Offres eclair : hors du flux habituel, affichees a part sur l accueil.
     eclairs = lire_offres_eclair({a["asin"] for a in aubaines})
     # Prix rouges : sous le prix conseille ET au plus bas depuis 90 jours.
