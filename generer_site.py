@@ -104,6 +104,12 @@ KEEPA_TOKEN_URL = "https://api.keepa.com/token"
 # cinquantaine de jetons, ce qui est l ordre de grandeur observe apres
 # plusieurs generations rapprochees.
 KEEPA_ATTENTE_MAX = 150
+# Cout observe de l appel /lightningdeal : environ 460 jetons, parce que Keepa
+# renvoie les 1 600 offres eclair du pays d un coup. C est de loin l appel le
+# plus cher de la generation — l appel /deal de Warehouse en coute une dizaine.
+# On ne le lance donc que si le solde le permet, sinon il vide le compte et
+# c est Warehouse qui trinque juste apres.
+ECLAIR_COUT_JETONS = 500
 WH_ETATS = {2: "Comme neuf", 3: "Très bon état", 4: "Bon état",
             5: "État acceptable", 0: "État non précisé"}
 WH_ETATS_VOULUS = [2, 3, 4]
@@ -382,27 +388,34 @@ def keepa_get(url: str, params: dict, timeout: int = 60):
         reste -= pause
 
 
-def journal_jetons_keepa() -> None:
-    """Note l etat du compte Keepa au debut de la generation.
+def journal_jetons_keepa():
+    """Note l etat du compte Keepa et renvoie le solde de jetons.
 
     Une ligne de journal qui coute un jeton et fait gagner une demi-heure de
     diagnostic : quand une section manque, on sait tout de suite s il s agit du
-    budget de jetons ou d autre chose.
+    budget de jetons ou d autre chose. Le solde renvoye sert ensuite a decider
+    si on peut se permettre l appel des offres eclair, qui est le plus cher du
+    lot.
+
+    Renvoie None si le solde est inconnu : dans ce cas on tente les appels,
+    quitte a se faire refuser — mieux vaut essayer que renoncer sur une
+    incertitude.
     """
     cle = os.environ.get("KEEPA_API_KEY", "").strip()
     if not cle:
-        return
+        return None
     try:
         j = requests.get(KEEPA_TOKEN_URL, timeout=20, params={"key": cle}).json()
     except (requests.RequestException, ValueError) as e:
         print(f"  jetons Keepa : etat inconnu ({type(e).__name__})")
-        return
+        return None
+    solde = j.get("tokensLeft")
     print("  jetons Keepa : {} disponibles, +{}/min, recharge dans {} s".format(
-        j.get("tokensLeft"), j.get("refillRate"),
-        round((j.get("refillIn") or 0) / 1000)))
+        solde, j.get("refillRate"), round((j.get("refillIn") or 0) / 1000)))
+    return solde if isinstance(solde, int) else None
 
 
-def lire_offres_eclair(exclure: set) -> list:
+def lire_offres_eclair(exclure: set, jetons=None) -> list:
     """Offres eclair Amazon.ca en cours, via Keepa.
 
     Ces offres-la n apparaissent pas dans le flux habituel : Keepa compare au
@@ -416,6 +429,10 @@ def lire_offres_eclair(exclure: set) -> list:
     cle = os.environ.get("KEEPA_API_KEY", "").strip()
     if not cle:
         print("  offres eclair : KEEPA_API_KEY absente, section ignoree")
+        return []
+    if jetons is not None and jetons < ECLAIR_COUT_JETONS:
+        print(f"  offres eclair : reportees, solde de {jetons} jetons insuffisant "
+              f"(il en faut ~{ECLAIR_COUT_JETONS}) — Warehouse est prioritaire")
         return []
     try:
         r = keepa_get(KEEPA_ECLAIR_URL,
@@ -1855,11 +1872,28 @@ def page_divulgation(maj_lisible: str) -> str:
 def main() -> int:
     aubaines = lire_aubaines()
 
-    journal_jetons_keepa()
-    # Offres eclair : hors du flux habituel, affichees a part sur l accueil.
-    eclairs = lire_offres_eclair({a["asin"] for a in aubaines})
-    # Prix rouges : sous le prix conseille ET au plus bas depuis 90 jours.
-    entrepot = lire_warehouse({a["asin"] for a in aubaines} | {o["asin"] for o in eclairs})
+    jetons = journal_jetons_keepa()
+
+    # L ORDRE DES DEUX APPELS SUIVANTS EST VOLONTAIRE.
+    #
+    # Warehouse coute une dizaine de jetons, les offres eclair environ 460.
+    # Quand on appelait les offres eclair en premier, elles vidaient le compte
+    # et Warehouse se faisait refuser derriere. En commencant par le moins cher,
+    # la section Warehouse passe toujours, et ce sont les offres eclair qui
+    # attendent la prochaine generation si le budget est court.
+    deja = {a["asin"] for a in aubaines}
+    entrepot = lire_warehouse(deja)
+    eclairs = lire_offres_eclair(deja, jetons)
+
+    # En cas de doublon entre les deux sections, l offre eclair gagne : elle a
+    # une echeance, donc l urgence, et c est elle qui fait cliquer.
+    asins_eclair = {o["asin"] for o in eclairs}
+    if asins_eclair:
+        avant = len(entrepot)
+        entrepot = [x for x in entrepot if x["asin"] not in asins_eclair]
+        if len(entrepot) != avant:
+            print(f"  {avant - len(entrepot)} article(s) Warehouse retire(s) : "
+                  f"deja presents en offre eclair")
     rouges, mention_rouge = lire_prix_rouges(
         {a["asin"] for a in aubaines} | {o["asin"] for o in eclairs})
     if not aubaines:
