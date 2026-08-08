@@ -174,29 +174,23 @@ except ImportError:            # le site se genere quand meme sans les intros
 # classes sous « Auto », des jouets sous « Mode », et une page Auto vide pendant
 # que les vraies pieces d auto tombaient dans « Autres aubaines ».
 CATEGORIES = {
-    # --- verifies, inchanges ---------------------------------------------
-    "21204935011": "Mode",                 # Vetements, chaussures et bijoux (172 art.)
-    "3006902011":  "Outils et bricolage",  # Outils et renovation (62 art.)
-    "2206275011":  "Maison et cuisine",    # Maison et cuisine (53 art.)
-    "2242989011":  "Sports et plein air",  # Sports et plein air (41 art.)
-    "667823011":   "Électronique",         # Électronique (27 art.)
-    "3198031":     "Électronique",         # Jeux video (4 art.)
-
-    # --- CORRIGES ---------------------------------------------------------
-    "6205517011":  "Jouets et jeux",       # etait « Mode » — c est Jouets et jeux (16 art.)
-    "6967215011":  "Aubaines",             # etait « Auto » — c est EPICERIE (8 art.)
-                                           #   <- la cause du the et des noix sous « Auto »
-    "6205511011":  "Aubaines",             # etait « Jouets » — c est Produits de bureau (42 art.)
-    "6205499011":  "Maison et cuisine",    # etait « Sports » — c est Terrasse, pelouse et jardin (11 art.)
-
-    # --- AJOUTS -----------------------------------------------------------
-    "6948389011":  "Auto",                 # Auto et moto — absent de la table : les 33 vraies
-                                           #   pieces d auto tombaient dans « Autres aubaines »
+    "21204935011": "Mode",                 # Vetements, chaussures et bijoux
     "2235620011":  "Mode",                 # Montres
-    "6205514011":  "Aubaines",             # Animalerie (22 art.)
-    "6205177011":  "Aubaines",             # Sante et soins personnels (21 art.)
-    "6205124011":  "Aubaines",             # Beaute (18 art.)
-    "3561346011":  "Aubaines",             # Bebe (3 art.)
+    "3006902011":  "Outils et bricolage",  # Outils et renovation
+    "2206275011":  "Maison et cuisine",    # Maison et cuisine
+    "2242989011":  "Sports et plein air",  # Sports et plein air
+    "667823011":   "Électronique",         # Électronique
+    "6205517011":  "Jouets et jeux",       # Jouets et jeux
+    "6948389011":  "Auto",                 # Auto et moto
+    # --- categories propres, ouvertes le 8 aout 2026 -----------------------
+    "3198031":     "Jeux vidéo",           # Jeux video et consoles
+    "6967215011":  "Épicerie",             # Epicerie et gourmet
+    "6205124011":  "Beauté",               # Beaute et soins
+    "6205177011":  "Santé et soins",       # Sante et soins personnels
+    "6205514011":  "Animalerie",           # Articles pour animaux
+    "3561346011":  "Bébé",                 # Bebe et puericulture
+    "6205511011":  "Produits de bureau",   # Fournitures de bureau et scolaires
+    "6205499011":  "Terrasse et jardin",   # Terrasse, pelouse et jardin
 }
 
 # Pages catégories PERMANENTES (URL stables pour Google, contenu regénéré
@@ -209,6 +203,14 @@ CATS_PAGES = [
     ("Sports et plein air", "sports-plein-air"),
     ("Outils et bricolage", "outils-bricolage"),
     ("Auto", "auto"),
+    ("Jeux vidéo", "jeux-video"),
+    ("Épicerie", "epicerie"),
+    ("Beauté", "beaute"),
+    ("Santé et soins", "sante-soins"),
+    ("Animalerie", "animalerie"),
+    ("Bébé", "bebe"),
+    ("Produits de bureau", "produits-bureau"),
+    ("Terrasse et jardin", "terrasse-jardin"),
     ("Aubaines", "autres-aubaines"),
 ]
 CATS_LIBELLES = {"Aubaines": "Autres aubaines"}  # libellé affiché pour le fallback
@@ -647,6 +649,7 @@ def lire_aubaines() -> list:
         if len(ligne) < 9:
             continue
         date, asin, titre, rabais, prix, lien, etiquette, statut, rootcat = ligne[:9]
+        img_keepa = ligne[9].strip() if len(ligne) > 9 else ""
         asin = (asin or "").strip()
         if not re.fullmatch(r"[A-Z0-9]{10}", asin):
             continue  # ignore l'en-tête ou les lignes vides
@@ -659,6 +662,7 @@ def lire_aubaines() -> list:
             "prix": nombre(prix),
             "lien": (lien or "").strip(),
             "categorie": CATEGORIES.get((rootcat or "").strip(), "Aubaines"),
+            "img_keepa": img_keepa,
         })
 
     # 1) Dédoublonnage strict par ASIN.
@@ -681,13 +685,35 @@ def lire_aubaines() -> list:
 
     for a in retenues:
         a["slug"] = slugifier(a["titre"], a["asin"])
-        a["image"] = f"https://images-na.ssl-images-amazon.com/images/P/{a['asin']}.01._SCLZZZZZZZ_.jpg"
+        a["urls_image"] = urls_image(a)
+        a["image"] = a["urls_image"][0]
 
     # 4) LA PHOTO EST OBLIGATOIRE. Une annonce sans image ne s'affiche pas.
     #    Amazon ne renvoie pas d'erreur pour une image absente : il renvoie un
     #    GIF d'un seul pixel, à peine quelques dizaines d'octets. On mesure.
     retenues = garder_avec_photo(retenues)
     return retenues[:NB_AUBAINES]
+
+
+_NOM_IMAGE = re.compile(r"^[A-Za-z0-9%2B/=_+-]{6,120}\.(?:jpg|jpeg|png)$", re.IGNORECASE)
+
+
+def urls_image(a) -> list:
+    """URL d image a essayer, de la plus fiable a la moins fiable.
+
+    Keepa fournit le vrai nom de fichier de l image du produit ; c est la
+    source la plus sure. L URL construite a partir de l ASIN reste en second
+    recours : elle fonctionne pour la majorite du catalogue, mais elle echouait
+    sur environ 15 % des aubaines, qui etaient alors purement et simplement
+    ecartees faute de photo.
+    """
+    urls = []
+    nom = (a.get("img_keepa") or "").strip()
+    if nom and _NOM_IMAGE.match(nom):
+        urls.append(f"https://m.media-amazon.com/images/I/{nom}")
+    urls.append(
+        f"https://images-na.ssl-images-amazon.com/images/P/{a['asin']}.01._SCLZZZZZZZ_.jpg")
+    return urls
 
 
 def garder_avec_photo(aubaines):
@@ -709,25 +735,32 @@ def garder_avec_photo(aubaines):
     INCERTAIN = "?"
 
     def empreinte(a):
-        try:
-            r = requests.get(a["image"], timeout=12, stream=True)
-            if r.status_code != 200:
+        """Essaie chaque URL candidate ; garde la premiere qui donne une image."""
+        reseau_ko = False
+        for url in (a.get("urls_image") or [a.get("image")]):
+            if not url:
+                continue
+            try:
+                r = requests.get(url, timeout=12, stream=True)
+                if r.status_code != 200:
+                    r.close()
+                    continue
+                octets = b""
+                for bloc in r.iter_content(8192):
+                    octets += bloc
+                    if len(octets) >= 32768:
+                        break
                 r.close()
-                return None
-            octets = b""
-            for bloc in r.iter_content(8192):
-                octets += bloc
-                if len(octets) >= 32768:
-                    break
-            r.close()
-            # Le GIF « image absente » d Amazon fait une quarantaine d octets.
-            if len(octets) <= 1000:
-                return None
-            return hashlib.md5(octets).hexdigest()
-        except requests.RequestException:
-            # Reseau qui tousse : on garde l aubaine sans tenter de la
-            # dedoublonner. Mieux vaut un doublon qu une aubaine perdue.
-            return INCERTAIN
+                # Le GIF « image absente » d Amazon fait une quarantaine d octets.
+                if len(octets) <= 1000:
+                    continue
+                a["image"] = url          # on retient celle qui a repondu
+                return hashlib.md5(octets).hexdigest()
+            except requests.RequestException:
+                reseau_ko = True
+        # Reseau qui tousse : on garde l aubaine sans tenter de la dedoublonner.
+        # Mieux vaut un doublon qu une aubaine perdue.
+        return INCERTAIN if reseau_ko else None
 
     with ThreadPoolExecutor(max_workers=16) as pool:
         empreintes = list(pool.map(empreinte, aubaines))
@@ -1223,6 +1256,8 @@ footer{text-align:center;color:#8496a8;font-size:13px;padding:26px}
 .guide ul{margin:0 0 14px;padding-left:20px}
 .guide li{margin:0 0 8px}
 .guide strong{color:#fff}
+.guide .avis{background:#171d24;border-left:3px solid #ffcc33;border-radius:6px;padding:12px 16px;margin:0 0 14px}
+.guide .avis p{margin:0}
 footer a{color:#8496a8}
 .chips{display:flex;flex-wrap:wrap;gap:8px;margin:14px 0 6px}
 .chip{background:#fff;color:#1a2230;border:1px solid #d7dee6;padding:7px 14px;
