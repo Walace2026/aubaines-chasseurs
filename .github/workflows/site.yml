@@ -31,16 +31,17 @@ jobs:
         run: python generer_site.py
         env:
           ONESIGNAL_REST_API_KEY: ${{ secrets.ONESIGNAL_REST_API_KEY }}
-      - name: Conserver l'archive des aubaines
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      - name: Conserver l'archive et le cache de traductions
         run: |
-          if [ -n "$(git status --porcelain archive.json)" ]; then
+          if [ -n "$(git status --porcelain archive.json traductions.json)" ]; then
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add archive.json
-            git commit -m "Archive des aubaines : mise a jour automatique"
+            git add archive.json traductions.json
+            git commit -m "Archive et traductions : mise a jour automatique"
             git push
           else
-            echo "Archive inchangee"
+            echo "Rien de nouveau a conserver"
           fi
       - name: Preparer l'artefact Pages
         uses: actions/upload-pages-artifact@v3
