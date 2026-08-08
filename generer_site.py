@@ -116,6 +116,16 @@ WH_ETATS_VOULUS = [2, 3, 4]
 WH_RABAIS_MIN = 15
 WH_MAX = 48                       # sur la page de categorie
 WH_ACCUEIL = 4                    # sur la page d accueil
+# Trois garde-fous de qualite, appris en regardant la premiere fournee.
+#
+# Le tri par pourcentage de rabais fait remonter la quincaillerie a bas prix :
+# une poignee de tiroir a 2,57 $ affiche −85 % parce que son prix neuf est
+# gonfle. Resultat, la section ressemblait a un fond de tiroir — sept poignees
+# Amerock sur quarante-huit articles, et un calendrier mural 2024 en tete de
+# page d accueil.
+WH_PRIX_MIN = 12.0                # sous ce prix, le rabais est un mirage
+WH_MAX_PAR_MARQUE = 2             # pas plus de deux articles de la meme marque
+WH_PAGES = 3                      # on ratisse plus large pour compenser le tri
 KC_WAREHOUSE = 9
 
 # Indices des series de prix Keepa (voir la documentation « csv »).
@@ -634,6 +644,71 @@ def lire_prix_rouges(exclure: set) -> list:
     return rouges, mention
 
 
+_ANNEE = re.compile(r"\b(20[12]\d)\b")
+# Articles dont l annee inscrite au titre determine la duree de vie. La liste
+# est volontairement courte et bilingue : les titres Amazon.ca melangent les
+# deux langues, et le filtre s applique avant la traduction.
+_DATES_PERIODIQUES = re.compile(
+    r"calendri|calendar|agenda|planificateur|planner|almanach|ephemerid|"
+    r"éphemerid|éphéméride|day\s*planner|wall\s*plann", re.I)
+
+
+def perime(titre: str) -> bool:
+    """Vrai si le titre est un article date dont l annee est deja passee.
+
+    Un calendrier mural 2024 affiche a −95 % en aout 2026 n est pas une aubaine,
+    c est un invendu, et le tri par pourcentage de rabais le fait remonter en
+    premiere position.
+
+    LE FILTRE NE S APPLIQUE QU AUX ARTICLES PERIODIQUES, et c est essentiel :
+    la premiere version rejetait « Rotule de direction Honda CR-V 2012-2016 »,
+    ou l annee designe la compatibilite du vehicule et non une peremption. Une
+    piece d auto sur trois porte des annees dans son titre — on aurait vide la
+    categorie Auto sans jamais s en apercevoir.
+
+    L annee courante reste acceptee : un agenda 2026 achete en aout 2026 sert
+    encore cinq mois.
+    """
+    t = titre or ""
+    if not _DATES_PERIODIQUES.search(t):
+        return False
+    annees = [int(a) for a in _ANNEE.findall(t)]
+    if not annees:
+        return False
+    return max(annees) < datetime.now().year
+
+
+def plafonner_par_marque(lots: list, plafond: int) -> list:
+    """Limite les articles partageant le premier mot de leur titre.
+
+    La premiere fournee Warehouse contenait sept poignees de tiroir Amerock sur
+    quarante-huit articles. Photos differentes, references differentes : la
+    deduplication visuelle ne pouvait rien y faire, et le visiteur voyait
+    pourtant une seule chose repetee sept fois.
+
+    Le premier mot du titre Amazon est presque toujours la marque, et apres
+    traduction c est souvent le type de produit (« Poignee », « Rideau »). Les
+    deux axes nous conviennent : ni sept articles de la meme marque, ni sept
+    fois le meme objet.
+
+    L ordre d entree est conserve, donc ce sont les meilleurs rabais de chaque
+    famille qui survivent.
+    """
+    vus = {}
+    gardes = []
+    for a in lots:
+        mot = re.split(r"[^A-Za-zÀ-ÿ0-9]+", (a.get("titre") or "").strip())
+        marque = (mot[0] if mot else "").lower()
+        if len(marque) < 3:               # « 3M », « AT » : trop court pour trancher
+            gardes.append(a)
+            continue
+        if vus.get(marque, 0) >= plafond:
+            continue
+        vus[marque] = vus.get(marque, 0) + 1
+        gardes.append(a)
+    return gardes
+
+
 def lire_warehouse(exclure: set) -> list:
     """Aubaines Amazon Warehouse : retours clients revendus par Amazon.
 
@@ -651,6 +726,11 @@ def lire_warehouse(exclure: set) -> list:
         "page": 0,
         "domainId": KEEPA_DOMAINE,
         "priceTypes": [KC_WAREHOUSE],
+        # Pas de filtre de prix cote serveur : le nom exact du champ n est pas
+        # confirme dans la doc /deal, et un champ inconnu fait repondre 400 a
+        # Keepa — on perdrait toute la section pour gagner quelques jetons. Le
+        # plancher WH_PRIX_MIN est applique plus bas, en Python, et les trois
+        # pages ratissees compensent largement le tri local.
         "warehouseConditions": WH_ETATS_VOULUS,
         "deltaPercentRange": [WH_RABAIS_MIN, 100],
         "salesRankRange": [1, 200000],
@@ -662,9 +742,15 @@ def lire_warehouse(exclure: set) -> list:
         "isFilterEnabled": True,
     }
     try:
-        r = keepa_get(KEEPA_DEAL_URL,
-                      {"key": cle, "selection": json.dumps(selection)}, timeout=60)
-        brut = ((r.json().get("deals") or {}).get("dr")) or []
+        brut = []
+        for page in range(WH_PAGES):
+            selection["page"] = page
+            r = keepa_get(KEEPA_DEAL_URL,
+                          {"key": cle, "selection": json.dumps(selection)}, timeout=60)
+            lot = ((r.json().get("deals") or {}).get("dr")) or []
+            brut.extend(lot)
+            if len(lot) < 100:     # derniere page atteinte, inutile d insister
+                break
     except (requests.RequestException, ValueError) as e:
         print(f"  warehouse : lecture impossible ({detail_erreur_keepa(e)}), section ignoree")
         return []
@@ -689,10 +775,15 @@ def lire_warehouse(exclure: set) -> list:
                 continue
         if rabais < WH_RABAIS_MIN:
             continue
+        if prix / 100.0 < WH_PRIX_MIN:
+            continue
+        titre_brut = (d.get("title") or "Aubaine").strip()
+        if perime(titre_brut):
+            continue
         etat = WH_ETATS.get(int(d.get("warehouseCondition") or 0), WH_ETATS[0])
         lots.append({
             "asin": asin,
-            "titre": (d.get("title") or "Aubaine").strip(),
+            "titre": titre_brut,
             "rabais": float(rabais),
             "prix": prix / 100.0,
             "neuf": neuf / 100.0 if neuf > 0 else None,
@@ -704,6 +795,11 @@ def lire_warehouse(exclure: set) -> list:
         })
 
     lots.sort(key=lambda x: x["rabais"], reverse=True)
+    avant_marque = len(lots)
+    lots = plafonner_par_marque(lots, WH_MAX_PAR_MARQUE)
+    if len(lots) != avant_marque:
+        print(f"  warehouse : {avant_marque - len(lots)} article(s) retire(s) — "
+              f"plus de {WH_MAX_PAR_MARQUE} de la meme marque")
     for a in lots:
         a["urls_image"] = urls_image(a)
         a["image"] = a["urls_image"][0]
