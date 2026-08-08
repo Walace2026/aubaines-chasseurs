@@ -1184,6 +1184,12 @@ def bloc_recherche(indice: str) -> str:
     presente, d ou qu elle vienne — offres eclair, Warehouse, aubaines du jour.
     Une section dont toutes les cartes sont masquees se cache elle-meme, pour
     ne pas laisser un titre orphelin au-dessus du vide.
+
+    Le recensement attend DOMContentLoaded. Sans cette attente, le script
+    s executerait a l endroit ou il est ecrit dans la page — donc AVANT la
+    grille des aubaines du jour, qu il ne verrait jamais. C est exactement le
+    bogue qu on a eu : la recherche ne trouvait que les huit cartes des deux
+    bandeaux du haut et annoncait « 0 resultat » sur 1 006 produits.
     """
     return f"""<div class="recherche"><input type="search" id="q"
  placeholder="{e(indice)}" autocomplete="off"><span class="r-nb" id="qn"></span></div>
@@ -1191,24 +1197,31 @@ def bloc_recherche(indice: str) -> str:
 « casque » plutôt que « casque bluetooth sony ».</p>
 <script>
 (function(){{
-  var q=document.getElementById('q'),n=document.getElementById('qn'),
-      v=document.getElementById('qv');
-  if(!q)return;
-  function plat(s){{return (s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');}}
-  var cartes=[].slice.call(document.querySelectorAll('.carte')).map(function(c){{
-    return {{el:c,txt:plat(c.textContent)}};}});
-  var sections=[].slice.call(document.querySelectorAll('.bloc-eclair,.bloc-entrepot,.bloc-rouge'));
-  function filtre(){{
-    var t=plat(q.value.trim()),mots=t?t.split(/\s+/):[],vis=0;
-    cartes.forEach(function(c){{
-      var ok=!mots.length||mots.every(function(m){{return c.txt.indexOf(m)>=0;}});
-      c.el.style.display=ok?'':'none';if(ok)vis++;}});
-    sections.forEach(function(s){{
-      var reste=s.querySelectorAll('.carte:not([style*="none"])').length;
-      s.style.display=(mots.length&&!reste)?'none':'';}});
-    n.textContent=mots.length?vis+' résultat'+(vis>1?'s':''):'';
-    v.hidden=!mots.length||vis>0;}}
-  q.addEventListener('input',filtre);
+  function demarrer(){{
+    var q=document.getElementById('q'),n=document.getElementById('qn'),
+        v=document.getElementById('qv');
+    if(!q)return;
+    function plat(s){{return (s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');}}
+    var cartes=[].slice.call(document.querySelectorAll('.carte')).map(function(c){{
+      return {{el:c,txt:plat(c.textContent)}};}});
+    var sections=[].slice.call(
+      document.querySelectorAll('.bloc-eclair,.bloc-entrepot,.bloc-rouge'));
+    function filtre(){{
+      var t=plat(q.value.trim()),mots=t?t.split(/\s+/):[],vis=0;
+      cartes.forEach(function(c){{
+        var ok=!mots.length||mots.every(function(m){{return c.txt.indexOf(m)>=0;}});
+        c.el.style.display=ok?'':'none';if(ok)vis++;}});
+      sections.forEach(function(s){{
+        var reste=[].slice.call(s.querySelectorAll('.carte')).some(function(c){{
+          return c.style.display!=='none';}});
+        s.style.display=(mots.length&&!reste)?'none':'';}});
+      n.textContent=mots.length?vis+' résultat'+(vis>1?'s':''):'';
+      v.hidden=!mots.length||vis>0;}}
+    q.addEventListener('input',filtre);
+  }}
+  if(document.readyState==='loading'){{
+    document.addEventListener('DOMContentLoaded',demarrer);
+  }}else{{demarrer();}}
 }})();
 </script>"""
 
