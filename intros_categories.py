@@ -697,6 +697,57 @@ pourcentage, mais l'économie en dollars est la plus importante de la catégorie
 </ul>
 """
 
+AMAZON_WAREHOUSE = """
+<h2>Amazon Warehouse : comprendre ce qu'on achete</h2>
+
+<p>Warehouse, c'est la section ou Amazon revend ses propres retours. Un client
+commande, change d'avis, renvoie l'article : Amazon l'inspecte, le classe par
+etat et le remet en vente moins cher. Ce ne sont pas des articles refurbished ni
+des fins de serie — <strong>c'est du stock neuf ou quasi neuf qui a fait un
+aller-retour</strong>. Dans une bonne proportion des cas, le seul defaut est la
+boite ouverte ou abimee.</p>
+
+<h3>Les quatre etats, et ce qu'ils veulent vraiment dire</h3>
+
+<ul>
+  <li><strong>Comme neuf</strong> — l'article est intact, souvent jamais
+  utilise. Le defaut est l'emballage. C'est la meilleure affaire de la
+  categorie et il n'y a a peu pres rien a craindre.</li>
+  <li><strong>Tres bon etat</strong> — traces d'usage minimes, parfois
+  invisibles. Accessoires et notice normalement presents.</li>
+  <li><strong>Bon etat</strong> — marques d'usage visibles mais l'article
+  fonctionne normalement. Correct pour un outil ou un article d'usage, moins
+  pour un cadeau.</li>
+  <li><strong>Etat acceptable</strong> — usure marquee. Nous ne publions pas
+  cette categorie : c'est celle qui genere l'essentiel des deceptions.</li>
+</ul>
+
+<h3>Ce qui rend Warehouse interessant</h3>
+
+<p>La <strong>garantie de retour de 30 jours d'Amazon s'applique</strong>, comme
+sur un article neuf. C'est ce que la plupart des gens ignorent, et c'est ce qui
+change tout : si l'etat ne correspond pas a la description, tu renvoies. Le
+risque reel est donc beaucoup plus faible que sur une place de marche
+d'occasion entre particuliers.</p>
+
+<h3>Deux reflexes utiles</h3>
+
+<ul>
+  <li><strong>Ca part vite.</strong> Il n'y a souvent qu'un seul exemplaire.
+  Une aubaine Warehouse reperee le matin peut avoir disparu a midi — c'est
+  pourquoi cette page se rafraichit trois fois par jour.</li>
+  <li><strong>Lis le commentaire de l'etat</strong> quand Amazon en fournit un
+  sur la fiche : « boite abimee », « accessoires manquants », « legeres
+  rayures ». C'est la que se trouve l'information qui fait accepter ou refuser
+  l'achat.</li>
+</ul>
+
+<p>Pour les articles a piles, les appareils electroniques et tout ce qui a des
+accessoires, verifie ce qui est inclus avant de commander. Pour le reste — outils,
+quincaillerie, articles de maison, vetements — l'ecart de prix vaut presque
+toujours le petit risque.</p>
+"""
+
 # ---------------------------------------------------------------------------
 
 INTROS = {
@@ -715,6 +766,7 @@ INTROS = {
     "bebe": BEBE.strip(),
     "produits-bureau": PRODUITS_BUREAU.strip(),
     "terrasse-jardin": TERRASSE_JARDIN.strip(),
+    "amazon-warehouse": AMAZON_WAREHOUSE.strip(),
     "autres-aubaines": AUTRES.strip(),
 }
 

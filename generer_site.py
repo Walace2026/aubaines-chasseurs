@@ -102,7 +102,8 @@ WH_ETATS = {2: "Comme neuf", 3: "Très bon état", 4: "Bon état",
             5: "État acceptable", 0: "État non précisé"}
 WH_ETATS_VOULUS = [2, 3, 4]
 WH_RABAIS_MIN = 15
-WH_MAX = 24
+WH_MAX = 48                       # sur la page de categorie
+WH_ACCUEIL = 4                    # sur la page d accueil
 KC_WAREHOUSE = 9
 
 # Indices des series de prix Keepa (voir la documentation « csv »).
@@ -1074,17 +1075,12 @@ def section_rouge_html(rouges, mention=None) -> str:
 </section>"""
 
 
-def section_warehouse_html(lots) -> str:
-    """Bloc Amazon Warehouse.
+WH_SLUG = "amazon-warehouse"
+WH_TITRE = "Amazon Warehouse"
 
-    L etat de l article figure sur chaque carte, et le prix du neuf est rappele
-    barre a cote du prix Warehouse : le visiteur sait exactement ce qu il
-    achete et a quoi il le compare. Lien direct vers Amazon, comme pour les
-    offres eclair — un article Warehouse est souvent unique, lui fabriquer une
-    page reviendrait a semer des liens morts.
-    """
-    if not lots:
-        return ""
+
+def cartes_warehouse_html(lots) -> str:
+    """Cartes Warehouse : etat affiche, prix du neuf rappele barre."""
     morceaux = []
     for o in lots:
         neuf = ""
@@ -1101,22 +1097,125 @@ def section_warehouse_html(lots) -> str:
 <span class="t">{e(o['titre'][:70])}</span>
 <span class="p">{e(prix_txt(o))}</span>
 {neuf}</a>""")
-    cartes = "\n".join(morceaux)
+    return "\n".join(morceaux)
 
+
+def presentation_warehouse() -> str:
+    """Le paragraphe d explication, identique sur l accueil et sur la page."""
+    return ("Des articles retournés par d'autres clients, vérifiés et revendus "
+            "par Amazon à rabais. <strong>Ce sont de vraies baisses de prix</strong>, "
+            "pas des prix conseillés gonflés — l'écart affiché est calculé sur le "
+            "prix du neuf. En échange, ce sont des articles d'occasion : l'état est "
+            "indiqué sur chaque carte, et la garantie de retour de 30 jours d'Amazon "
+            "s'applique quand même. Souvent un seul exemplaire disponible, donc ça "
+            "part vite.")
+
+
+def section_warehouse_html(lots) -> str:
+    """Apercu Warehouse sur l accueil : les quatre meilleurs, puis un bouton.
+
+    Vingt-quatre cartes en haut de page repoussaient les aubaines du jour trop
+    bas. Quatre suffisent a montrer ce qu on y trouve ; le reste vit sur sa
+    propre page, qui a en plus l avantage d etre une URL indexable.
+    """
+    if not lots:
+        return ""
+    apercu = lots[:WH_ACCUEIL]
+    reste = max(0, len(lots) - len(apercu))
+    bouton = (f'<a class="bouton-cat" href="/categorie/{WH_SLUG}.html">'
+              f'Voir toute la catégorie Amazon Warehouse'
+              + (f' <span>({reste} de plus)</span>' if reste else '') + '</a>')
     return f"""<section class="bloc-entrepot">
-<h2>📦 Amazon Warehouse — des retours à petit prix</h2>
-<p class="sous">Des articles retournés par d'autres clients, vérifiés et revendus
-par Amazon à rabais. <strong>Ce sont de vraies baisses de prix</strong>, pas des
-prix conseillés gonflés — l'écart affiché est calculé sur le prix du neuf.
-En échange, ce sont des articles d'occasion : l'état est indiqué sur chaque
-carte, et la garantie de retour de 30 jours d'Amazon s'applique quand même.
-Souvent un seul exemplaire disponible, donc ça part vite.</p>
-<section class="grille entrepots">{cartes}</section>
+<h2>\U0001F4E6 {WH_TITRE} — des retours à petit prix</h2>
+<p class="sous">{presentation_warehouse()}</p>
+<section class="grille entrepots">{cartes_warehouse_html(apercu)}</section>
+{bouton}
 </section>"""
 
 
+def page_warehouse(lots, maj_lisible) -> str:
+    """Page de categorie Amazon Warehouse, avec la selection complete."""
+    desc = ("Les meilleures aubaines Amazon Warehouse au Québec : des retours "
+            "clients vérifiés et revendus à rabais par Amazon. État indiqué, "
+            "prix du neuf comparé, mis à jour trois fois par jour.")
+    contenu = (f'<section class="grille entrepots">{cartes_warehouse_html(lots)}</section>'
+               if lots else
+               '<p class="vide">Aucune aubaine Warehouse en ce moment — la '
+               'sélection change plusieurs fois par jour, reviens tantôt ! '
+               '<a href="/">Voir les aubaines du jour →</a></p>')
+    return f"""<!doctype html>
+<html lang="fr-CA">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Amazon Warehouse au Québec — retours à petit prix | Chasseurs de Deals</title>
+<meta name="description" content="{e(desc)}">
+<link rel="canonical" href="{e(DOMAINE)}/categorie/{WH_SLUG}.html">
+<meta name="robots" content="index,follow,max-image-preview:large">
+<style>{CSS}</style>
+{GOOGLE_VERIF}
+{ONESIGNAL}
+</head>
+<body>
+<header><a class="logo" href="/">🔥 Chasseurs de Deals Québec</a>
+<a class="fb" href="{e(PAGE_FACEBOOK)}" rel="noopener">Suivre la page Facebook</a></header>
+<main>
+<nav class="fil"><a href="/">Accueil</a> › <span>{WH_TITRE}</span></nav>
+<section class="intro">
+<h1>\U0001F4E6 Amazon Warehouse au Québec</h1>
+<p>{presentation_warehouse()}</p>
+</section>
+{chips_html(WH_SLUG)}
+{bloc_recherche("🔎 Rechercher dans Amazon Warehouse… (nom, marque)")}
+{contenu}
+{guide_html(WH_SLUG)}
+{formulaire_infolettre("aubaines")}
+</main>
+<footer>Mis à jour le {e(maj_lisible)} · <a href="{e(SITE_PRINCIPAL)}">chasseursdedealsqc.com</a>
+· <a href="{e(PAGE_FACEBOOK)}">Facebook</a> · <a href="/divulgation.html">Divulgation d'affiliation</a><br>En tant que Partenaire Amazon, je réalise un bénéfice sur les achats remplissant les conditions requises.</footer>
+</body></html>"""
+
+
+def bloc_recherche(indice: str) -> str:
+    """Champ de recherche qui filtre TOUTES les cartes de la page.
+
+    Une seule implementation pour l accueil et pour les pages categorie. Le
+    script ne connait pas les sections a l avance : il ramasse chaque .carte
+    presente, d ou qu elle vienne — offres eclair, Warehouse, aubaines du jour.
+    Une section dont toutes les cartes sont masquees se cache elle-meme, pour
+    ne pas laisser un titre orphelin au-dessus du vide.
+    """
+    return f"""<div class="recherche"><input type="search" id="q"
+ placeholder="{e(indice)}" autocomplete="off"><span class="r-nb" id="qn"></span></div>
+<p class="r-vide" id="qv" hidden>Aucune aubaine ne correspond. Essaie un mot plus court —
+« casque » plutôt que « casque bluetooth sony ».</p>
+<script>
+(function(){{
+  var q=document.getElementById('q'),n=document.getElementById('qn'),
+      v=document.getElementById('qv');
+  if(!q)return;
+  function plat(s){{return (s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');}}
+  var cartes=[].slice.call(document.querySelectorAll('.carte')).map(function(c){{
+    return {{el:c,txt:plat(c.textContent)}};}});
+  var sections=[].slice.call(document.querySelectorAll('.bloc-eclair,.bloc-entrepot,.bloc-rouge'));
+  function filtre(){{
+    var t=plat(q.value.trim()),mots=t?t.split(/\s+/):[],vis=0;
+    cartes.forEach(function(c){{
+      var ok=!mots.length||mots.every(function(m){{return c.txt.indexOf(m)>=0;}});
+      c.el.style.display=ok?'':'none';if(ok)vis++;}});
+    sections.forEach(function(s){{
+      var reste=s.querySelectorAll('.carte:not([style*="none"])').length;
+      s.style.display=(mots.length&&!reste)?'none':'';}});
+    n.textContent=mots.length?vis+' résultat'+(vis>1?'s':''):'';
+    v.hidden=!mots.length||vis>0;}}
+  q.addEventListener('input',filtre);
+}})();
+</script>"""
+
+
 def chips_html(active_slug: str = "") -> str:
-    chips = []
+    chips = [f'<a class="chip entrepot{" actif" if active_slug == WH_SLUG else ""}"'
+             f' href="/categorie/{WH_SLUG}.html">\U0001F4E6 {WH_TITRE}</a>']
     for nom, slug in CATS_PAGES:
         lib = CATS_LIBELLES.get(nom, nom)
         cls = "chip actif" if slug == active_slug else "chip"
@@ -1166,6 +1265,7 @@ def page_categorie(nom, slug, items, maj_lisible) -> str:
 <p>Les rabais Amazon « {e(lib)} » repérés aujourd'hui, mis à jour chaque matin.</p>
 </section>
 {chips_html(slug)}
+{bloc_recherche("🔎 Rechercher dans cette catégorie… (nom, marque)")}
 {contenu}
 {guide_html(slug)}
 {formulaire_infolettre("aubaines")}
@@ -1214,28 +1314,8 @@ Clique une aubaine pour la voir — et suis notre
 {bloc_entrepot}
 {bloc_rouge}
 {chips_html()}
-<div class="recherche"><input type="search" id="q" placeholder="🔎 Rechercher un produit… (nom, marque, catégorie)"
- autocomplete="off"><span class="r-nb" id="qn"></span></div>
+{bloc_recherche("🔎 Rechercher dans tout le site… (nom, marque, catégorie)")}
 <section class="grille" id="grille">{cartes}</section>
-<p class="r-vide" id="qv" hidden>Aucune aubaine ne correspond. Essaie un mot plus court —
-« casque » plutôt que « casque bluetooth sony ».</p>
-<script>
-(function(){{
-  var q=document.getElementById('q'),g=document.getElementById('grille'),
-      n=document.getElementById('qn'),v=document.getElementById('qv');
-  function plat(s){{return s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');}}
-  var cartes=[].slice.call(g.children).map(function(c){{
-    return {{el:c,txt:plat(c.textContent||'')}};}});
-  function filtre(){{
-    var t=plat(q.value.trim()),vis=0;
-    cartes.forEach(function(c){{
-      var ok=!t||t.split(/\s+/).every(function(m){{return c.txt.indexOf(m)>=0;}});
-      c.el.style.display=ok?'':'none';if(ok)vis++;}});
-    n.textContent=t?vis+' résultat'+(vis>1?'s':''):'';
-    v.hidden=!t||vis>0;}}
-  q.addEventListener('input',filtre);
-}})();
-</script>
 {formulaire_infolettre("aubaines")}
 </main>
 <footer>Mis à jour le {e(maj_lisible)} · <a href="{e(SITE_PRINCIPAL)}">chasseursdedealsqc.com</a>
@@ -1245,7 +1325,7 @@ Clique une aubaine pour la voir — et suis notre
 
 def sitemap(aubaines, maj_iso, archives=None) -> str:
     urls = [f"<url><loc>{DOMAINE}/</loc><lastmod>{maj_iso}</lastmod><changefreq>daily</changefreq><priority>1.0</priority></url>"]
-    for _nom, slug in CATS_PAGES:
+    for _nom, slug in list(CATS_PAGES) + [(WH_TITRE, WH_SLUG)]:
         urls.append(f"<url><loc>{DOMAINE}/categorie/{slug}.html</loc>"
                     f"<lastmod>{maj_iso}</lastmod><changefreq>daily</changefreq><priority>0.8</priority></url>")
     for a in aubaines:
@@ -1396,6 +1476,11 @@ footer{text-align:center;color:#8496a8;font-size:13px;padding:26px}
 .bloc-entrepot h2{font-size:21px;margin:0 0 6px;color:#7fd1b9}
 .bloc-entrepot .sous{margin:0 0 16px;color:#8496a8;font-size:14px;line-height:1.6;max-width:700px}
 .bloc-entrepot .sous strong{color:#c9d6e2}
+.bouton-cat{display:inline-block;margin:14px 4px 6px;padding:11px 20px;border-radius:999px;
+ background:#7fd1b91a;border:1px solid #7fd1b966;color:#7fd1b9;font-weight:600;font-size:14px}
+.bouton-cat:hover{background:#7fd1b92e}
+.bouton-cat span{font-weight:400;color:#8496a8}
+.chip.entrepot{border-color:#7fd1b966;color:#7fd1b9}
 .carte.entrepot{box-shadow:0 0 0 1px #7fd1b944}
 .carte.entrepot .cat{color:#7fd1b9}
 .carte.entrepot .neuf{display:block;margin-top:3px;font-size:12px;color:#8496a8;text-decoration:line-through}
@@ -1687,6 +1772,8 @@ def main() -> int:
 
     (SORTIE / "index.html").write_text(page_index(aubaines, maj_iso, maj_lisible, eclairs, rouges, mention_rouge, entrepot), encoding="utf-8")
     (SORTIE / "divulgation.html").write_text(page_divulgation(maj_lisible), encoding="utf-8")
+    (SORTIE / "categorie" / f"{WH_SLUG}.html").write_text(
+        page_warehouse(entrepot, maj_lisible), encoding="utf-8")
     jour = datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d")
     archives = fusionner_archive(charger_archive(), aubaines, jour)
     ARCHIVE_FICHIER.write_text(json.dumps(archives, ensure_ascii=False, sort_keys=True),
