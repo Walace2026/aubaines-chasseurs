@@ -85,8 +85,10 @@ ECLAIR_MAX = 24                   # on garde la section courte et lisible
 # apparence.
 KEEPA_QUERY_URL = "https://api.keepa.com/query"
 KEEPA_PRODUIT_URL = "https://api.keepa.com/product"
-ROUGE_RABAIS_MIN = 25             # % minimum sous le prix conseille
-ROUGE_CANDIDATS = 300             # ASIN examines par cycle (1 jeton Keepa chacun)
+ROUGE_RABAIS_MIN = 15             # % minimum sous le prix conseille
+ROUGE_CANDIDATS = 100             # ASIN examines par cycle (1 jeton Keepa chacun)
+                                  # 100 = un seul appel /product. Au-dela, Keepa
+                                  # renvoyait des erreurs de quota de jetons.
 ROUGE_MAX = 36                    # affiches sur la page
 ROUGE_LOT = 100                   # ASIN par appel /product
 
@@ -420,7 +422,17 @@ def lire_prix_rouges(exclure: set) -> list:
                              params={"key": cle, "domain": KEEPA_DOMAINE,
                                      "asin": ",".join(lot), "stats": 90})
             r.raise_for_status()
-            produits.extend(r.json().get("products") or [])
+            reponse = r.json()
+            produits.extend(reponse.get("products") or [])
+            jetons = reponse.get("tokensLeft")
+            if jetons is not None:
+                print(f"  prix rouges : {jetons} jetons Keepa restants")
+        except requests.HTTPError as e:
+            # 429 = jetons epuises. Keepa indique le delai de recharge.
+            code = getattr(e.response, "status_code", "?")
+            print(f"  prix rouges : lot refuse par Keepa (HTTP {code}) — "
+                  f"probable manque de jetons, on garde ce qu on a")
+            break
         except (requests.RequestException, ValueError) as e:
             print(f"  prix rouges : lot ignore ({type(e).__name__})")
 
