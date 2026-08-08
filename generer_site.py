@@ -108,6 +108,11 @@ ONESIGNAL = (
 NB_AUBAINES = 1000        # nombre de pages à générer (les meilleurs rabais)
 FUSEAU = timezone(timedelta(hours=-4))  # heure de l'Est
 
+# strftime("%B") renvoie le mois en anglais : GitHub Actions tourne en locale C,
+# et installer une locale francaise sur le runner serait fragile. Table en dur.
+MOIS_FR = ("janvier", "février", "mars", "avril", "mai", "juin", "juillet",
+           "août", "septembre", "octobre", "novembre", "décembre")
+
 # Balise de vérification Google Search Console (jeton propre au compte Google —
 # la même balise valide toutes les propriétés du compte).
 GOOGLE_VERIF = ('<meta name="google-site-verification" '
@@ -1075,7 +1080,8 @@ def main() -> int:
 
     maintenant = datetime.now(FUSEAU)
     maj_iso = maintenant.strftime("%Y-%m-%d")
-    maj_lisible = maintenant.strftime("%d %B %Y à %H h%M")
+    maj_lisible = (f"{maintenant.day} {MOIS_FR[maintenant.month - 1]} "
+                   f"{maintenant.year} à {maintenant.hour} h {maintenant.minute:02d}")
 
     SORTIE.mkdir(exist_ok=True)
     (SORTIE / "aubaine").mkdir(exist_ok=True)
