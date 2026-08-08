@@ -50,6 +50,16 @@ CSV_URLS = [
 # Cache des titres traduits en francais (onglet « Traductions », colonnes
 # ASIN | titre FR). Alimente chaque matin a 5 h 12 par le scenario Make
 # « TRADUCTION - cache titres FR », soit avant la generation de 5 h 20.
+# Traduction des titres en francais avec Claude (API Anthropic).
+# Le cache est un fichier du depot : chaque ASIN n est traduit qu une seule
+# fois dans sa vie, et GitHub Actions reverse le fichier a chaque execution.
+# Sans cle ANTHROPIC_API_KEY, on garde simplement les titres d origine.
+TRAD_FICHIER = Path(__file__).resolve().parent / "traductions.json"
+ANTHROPIC_MODELE = "claude-haiku-4-5"
+ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
+LOT_TRADUCTION = 25      # titres par appel
+MAX_TRADUCTIONS = 400    # garde-fou de cout par execution
+
 TRAD_URLS = [
     f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/gviz/tq?tqx=out:csv&sheet=Traductions",
     f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&sheet=Traductions",
@@ -243,6 +253,99 @@ def choisir_moins_cher(items: list) -> dict:
     return max(items, key=lambda x: x["rabais"])
 
 
+def charger_cache_trad() -> dict:
+    """Cache ASIN -> titre francais, conserve dans le depot."""
+    try:
+        with open(TRAD_FICHIER, encoding="utf-8") as f:
+            d = json.load(f)
+            return d if isinstance(d, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def traduire_lot(titres: dict, cle: str) -> dict:
+    """Traduit un lot de titres avec Claude. Renvoie {asin: titre_fr}."""
+    liste = "\n".join(f"{a} :: {t}" for a, t in titres.items())
+    consigne = (
+        "Tu traduis des titres de produits Amazon en francais quebecois, pour un "
+        "site d aubaines. Regles : garde les noms de marque, les modeles, les "
+        "chiffres et les unites tels quels ; traduis le reste en francais clair "
+        "et naturel ; n invente aucune information absente du titre ; reste sous "
+        "150 caracteres ; si le titre est deja en francais, recopie-le tel quel.\n\n"
+        "Reponds UNIQUEMENT par un objet JSON {\"ASIN\": \"titre traduit\"}, "
+        "sans texte autour et sans bloc de code."
+    )
+    corps = {
+        "model": ANTHROPIC_MODELE,
+        "max_tokens": 4000,
+        "system": consigne,
+        "messages": [{"role": "user", "content": liste}],
+    }
+    r = requests.post(
+        ANTHROPIC_URL, json=corps, timeout=120,
+        headers={"x-api-key": cle, "anthropic-version": "2023-06-01",
+                 "content-type": "application/json"})
+    r.raise_for_status()
+    texte = "".join(b.get("text", "") for b in r.json().get("content", [])).strip()
+    if texte.startswith("```"):
+        texte = texte.split("```")[1]
+        texte = texte.split("\n", 1)[1] if texte.lower().startswith("json") else texte
+    debut, fin = texte.find("{"), texte.rfind("}")
+    if debut < 0 or fin < 0:
+        raise ValueError("reponse sans objet JSON")
+    obj = json.loads(texte[debut:fin + 1])
+    return {a: str(t).strip() for a, t in obj.items()
+            if a in titres and str(t).strip()}
+
+
+def appliquer_traductions(aubaines: list) -> list:
+    """Remplace les titres anglais par leur version francaise.
+
+    Trois sources, dans l ordre : le cache du depot, l onglet « Traductions »
+    de la feuille (historique), puis Claude pour ce qui manque encore. Tout
+    echec est absorbe : un titre non traduit reste en anglais, le site sort
+    quand meme. Publier des aubaines en anglais vaut mieux que ne rien publier.
+    """
+    cache = charger_cache_trad()
+    depart = len(cache)
+    for asin, fr in lire_traductions().items():
+        cache.setdefault(asin, fr)
+
+    cle = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+    manquants = {a["asin"]: a["titre"] for a in aubaines if a["asin"] not in cache}
+    if manquants and cle:
+        a_faire = dict(list(manquants.items())[:MAX_TRADUCTIONS])
+        if len(manquants) > MAX_TRADUCTIONS:
+            print(f"  traduction : {len(manquants)} titres manquants, "
+                  f"{MAX_TRADUCTIONS} traites cette fois (garde-fou de cout)")
+        items = list(a_faire.items())
+        for i in range(0, len(items), LOT_TRADUCTION):
+            lot = dict(items[i:i + LOT_TRADUCTION])
+            try:
+                cache.update(traduire_lot(lot, cle))
+            except Exception as e:                   # noqa: BLE001
+                print(f"  traduction : lot ignore ({type(e).__name__}: {e})")
+    elif manquants:
+        print(f"  traduction : {len(manquants)} titres sans traduction "
+              f"(ANTHROPIC_API_KEY absente)")
+
+    for a in aubaines:
+        fr = cache.get(a["asin"])
+        if fr:
+            a["titre"] = fr
+
+    if len(cache) != depart:
+        try:
+            TRAD_FICHIER.write_text(
+                json.dumps(cache, ensure_ascii=False, indent=0, sort_keys=True),
+                encoding="utf-8")
+        except OSError as e:
+            print(f"  traduction : cache non enregistre ({e})")
+    print(f"  traductions : {len(cache)} titres en cache, "
+          f"{sum(1 for a in aubaines if a['asin'] in cache)}/{len(aubaines)} aubaines en francais")
+    return aubaines
+
+
 def lire_traductions() -> dict:
     """ASIN -> titre francais, depuis l onglet « Traductions ».
 
@@ -289,8 +392,6 @@ def lire_aubaines() -> list:
     if texte is None:
         raise SystemExit(f"ERREUR : impossible de lire la feuille publiée ({dernier}).")
 
-    trad = lire_traductions()
-
     aubaines = []
     for ligne in csv.reader(io.StringIO(texte)):
         if len(ligne) < 9:
@@ -303,7 +404,7 @@ def lire_aubaines() -> list:
             continue
         aubaines.append({
             "asin": asin,
-            "titre": trad.get(asin) or (titre or "").strip() or "Aubaine",
+            "titre": (titre or "").strip() or "Aubaine",
             "rabais": nombre(rabais) or 0,
             "prix": nombre(prix),
             "lien": (lien or "").strip(),
@@ -324,6 +425,10 @@ def lire_aubaines() -> list:
 
     # 3) Meilleurs rabais d'abord, puis slug + image.
     retenues.sort(key=lambda x: x["rabais"], reverse=True)
+
+    # Traduire avant de fabriquer les slugs : les URL sont ainsi en francais.
+    retenues = appliquer_traductions(retenues[:NB_AUBAINES])
+
     for a in retenues:
         a["slug"] = slugifier(a["titre"], a["asin"])
         a["image"] = f"https://images-na.ssl-images-amazon.com/images/P/{a['asin']}.01._SCLZZZZZZZ_.jpg"
