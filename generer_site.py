@@ -446,33 +446,65 @@ def lire_aubaines() -> list:
 
 
 def garder_avec_photo(aubaines):
-    """Ne garde que les aubaines dont l'image Amazon existe vraiment."""
-    from concurrent.futures import ThreadPoolExecutor
+    """Verifie que la photo existe, puis retire les doublons visuels.
 
-    def a_une_photo(a):
+    Deux variantes du meme produit (tailles, couleurs) ont des ASIN
+    differents, donc des URL d image differentes — mais Amazon leur sert
+    exactement le meme fichier. Comparer l empreinte des octets telecharges
+    est donc le moyen le plus sur de reperer les doublons que le titre n a
+    pas permis de detecter : c est le produit qui decide, pas sa description.
+
+    L image est telechargee une seule fois et sert aux deux usages : preuve
+    d existence et empreinte. On s arrete a 32 Ko, largement assez pour
+    distinguer deux photos differentes, dix fois moins de bande passante.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+    import hashlib
+
+    INCERTAIN = "?"
+
+    def empreinte(a):
         try:
-            r = requests.head(a["image"], timeout=8, allow_redirects=True)
-            taille = int(r.headers.get("Content-Length") or 0)
+            r = requests.get(a["image"], timeout=12, stream=True)
             if r.status_code != 200:
-                return False
-            if taille:            # le GIF « image absente » fait ~40 octets
-                return taille > 1000
-            # Pas de Content-Length ? On lit le début du fichier pour trancher.
-            g = requests.get(a["image"], timeout=8, stream=True)
-            morceau = next(g.iter_content(2048), b"")
-            g.close()
-            return len(morceau) > 1000
+                r.close()
+                return None
+            octets = b""
+            for bloc in r.iter_content(8192):
+                octets += bloc
+                if len(octets) >= 32768:
+                    break
+            r.close()
+            # Le GIF « image absente » d Amazon fait une quarantaine d octets.
+            if len(octets) <= 1000:
+                return None
+            return hashlib.md5(octets).hexdigest()
         except requests.RequestException:
-            # Dans le doute (réseau qui tousse), on garde : le filet
-            # côté navigateur retirera la carte si l'image ne vient pas.
-            return True
+            # Reseau qui tousse : on garde l aubaine sans tenter de la
+            # dedoublonner. Mieux vaut un doublon qu une aubaine perdue.
+            return INCERTAIN
 
     with ThreadPoolExecutor(max_workers=16) as pool:
-        verdicts = list(pool.map(a_une_photo, aubaines))
-    gardees = [a for a, ok in zip(aubaines, verdicts) if ok]
-    retirees = len(aubaines) - len(gardees)
-    if retirees:
-        print(f"{retirees} aubaine(s) sans photo écartée(s) — la photo est obligatoire.")
+        empreintes = list(pool.map(empreinte, aubaines))
+
+    sans_photo = 0
+    groupes, incertains = {}, []
+    for a, emp in zip(aubaines, empreintes):
+        if emp is None:
+            sans_photo += 1
+        elif emp == INCERTAIN:
+            incertains.append(a)
+        else:
+            groupes.setdefault(emp, []).append(a)
+
+    gardees = [choisir_moins_cher(g) for g in groupes.values()] + incertains
+    gardees.sort(key=lambda x: x["rabais"], reverse=True)
+
+    doublons = sum(len(g) - 1 for g in groupes.values())
+    if sans_photo:
+        print(f"  {sans_photo} aubaine(s) sans photo ecartee(s) — la photo est obligatoire.")
+    if doublons:
+        print(f"  {doublons} doublon(s) visuel(s) retire(s) — meme photo, on garde le moins cher.")
     return gardees
 
 
