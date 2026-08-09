@@ -931,6 +931,36 @@ def lire_traductions() -> dict:
     return {}
 
 
+def invraisemblable(prix, rabais, conseille):
+    """Renvoie le motif de rejet d une annonce douteuse, ou None si elle tient.
+
+    DERNIER REMPART AVANT LA PAGE. Peu importe ce que la feuille contient, une
+    carte qui annonce « 0,01 $ » ou « −0 % » detruit la credibilite du site plus
+    surement que dix aubaines manquantes. Le generateur ne peut pas reparer une
+    donnee fausse, mais il peut refuser de la publier.
+
+    Les trois cas viennent d incidents reels, pas d hypotheses :
+
+    1. PRIX ABSENT OU NUL. Keepa ecrit -1 quand il n y a aucune offre. Divise
+       par 100, ca donnait les 0,01 $ vus sur 610 annonces.
+    2. RABAIS NUL. Sans baisse de prix, ce n est pas une aubaine : c est un
+       produit. Le site en annoncait 894 a « −0 % ».
+    3. RABAIS CONTREDIT PAR LE PRIX CONSEILLE. Un article a 42,99 $ dont le
+       prix conseille est 41,99 $ ne peut pas etre affiche a −98 %. Le chiffre
+       vient d un historique aberrant chez Keepa ; on ne le relaie pas.
+
+    Le prix conseille est facultatif : absent, la verification est sautee
+    plutot que de rejeter l annonce.
+    """
+    if prix is None or prix <= 0:
+        return "prix absent ou nul"
+    if rabais is None or rabais < 1:
+        return "aucun rabais reel"
+    if conseille is not None and conseille > 0 and prix >= conseille:
+        return "rabais contredit par le prix conseille"
+    return None
+
+
 def lire_aubaines() -> list:
     dernier = None
     for url in CSV_URLS:
@@ -949,25 +979,39 @@ def lire_aubaines() -> list:
         raise SystemExit(f"ERREUR : impossible de lire la feuille publiée ({dernier}).")
 
     aubaines = []
+    rejets = {}
     for ligne in csv.reader(io.StringIO(texte)):
         if len(ligne) < 9:
             continue
         date, asin, titre, rabais, prix, lien, etiquette, statut, rootcat = ligne[:9]
         img_keepa = ligne[9].strip() if len(ligne) > 9 else ""
+        conseille = nombre(ligne[10]) if len(ligne) > 10 else None
         asin = (asin or "").strip()
         if not re.fullmatch(r"[A-Z0-9]{10}", asin):
             continue  # ignore l'en-tête ou les lignes vides
         if (statut or "").strip().lower() not in ("actif", "", "aubaine du jour"):
             continue
+
+        val_prix = nombre(prix)
+        val_rabais = nombre(rabais) or 0
+        motif = invraisemblable(val_prix, val_rabais, conseille)
+        if motif:
+            rejets[motif] = rejets.get(motif, 0) + 1
+            continue
+
         aubaines.append({
             "asin": asin,
             "titre": (titre or "").strip() or "Aubaine",
-            "rabais": nombre(rabais) or 0,
-            "prix": nombre(prix),
+            "rabais": val_rabais,
+            "prix": val_prix,
             "lien": (lien or "").strip(),
             "categorie": CATEGORIES.get((rootcat or "").strip(), "Aubaines"),
             "img_keepa": img_keepa,
         })
+
+    if rejets:
+        detail = ", ".join(f"{n} × {m}" for m, n in sorted(rejets.items()))
+        print(f"  {sum(rejets.values())} annonce(s) ecartee(s) — {detail}")
 
     # 1) Dédoublonnage strict par ASIN.
     par_asin = {}
