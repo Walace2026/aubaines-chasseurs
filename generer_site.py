@@ -931,6 +931,10 @@ def lire_traductions() -> dict:
     return {}
 
 
+ID_LISTE = 10                     # colonne K : prix conseille, ecrit par Make
+FACTEUR_CONSEILLE = 10            # tolerance avant de crier a l aberration
+
+
 def invraisemblable(prix, rabais, conseille):
     """Renvoie le motif de rejet d une annonce douteuse, ou None si elle tient.
 
@@ -945,9 +949,19 @@ def invraisemblable(prix, rabais, conseille):
        par 100, ca donnait les 0,01 $ vus sur 610 annonces.
     2. RABAIS NUL. Sans baisse de prix, ce n est pas une aubaine : c est un
        produit. Le site en annoncait 894 a « −0 % ».
-    3. RABAIS CONTREDIT PAR LE PRIX CONSEILLE. Un article a 42,99 $ dont le
-       prix conseille est 41,99 $ ne peut pas etre affiche a −98 %. Le chiffre
-       vient d un historique aberrant chez Keepa ; on ne le relaie pas.
+    3. RABAIS ABSURDE. Un article a 42,99 $ affiche a −98 % suppose un prix
+       anterieur de 2 149 $, alors que son prix conseille est de 41,99 $. Le
+       chiffre vient d un historique aberrant chez Keepa, pas d une vraie
+       baisse.
+
+    LE SEUIL DU TROISIEME TEST EST VOLONTAIREMENT TRES PERMISSIF. Le prix
+    conseille d Amazon est peu fiable, surtout sur les articles bon marche
+    vendus par des tiers — mesure sur la feuille du jour, exiger simplement
+    « prix inferieur au prix conseille » ecartait 199 annonces parfaitement
+    valables, et un facteur 3 en ecartait encore 36. Le facteur 10 ne retient
+    que l aberration franche : sur 802 annonces avec un prix conseille connu,
+    il en ecarte exactement une, celle decrite ci-dessus. Le but est de bloquer
+    l impossible, pas d arbitrer le discutable.
 
     Le prix conseille est facultatif : absent, la verification est sautee
     plutot que de rejeter l annonce.
@@ -956,8 +970,12 @@ def invraisemblable(prix, rabais, conseille):
         return "prix absent ou nul"
     if rabais is None or rabais < 1:
         return "aucun rabais reel"
-    if conseille is not None and conseille > 0 and prix >= conseille:
-        return "rabais contredit par le prix conseille"
+    if rabais >= 100:
+        return "rabais impossible"          # −100 % : le produit serait gratuit
+    if conseille is not None and conseille > 0:
+        avant = prix / (1 - rabais / 100.0)   # prix anterieur implique par le rabais
+        if avant > conseille * FACTEUR_CONSEILLE:
+            return "rabais absurde"
     return None
 
 
@@ -985,7 +1003,7 @@ def lire_aubaines() -> list:
             continue
         date, asin, titre, rabais, prix, lien, etiquette, statut, rootcat = ligne[:9]
         img_keepa = ligne[9].strip() if len(ligne) > 9 else ""
-        conseille = nombre(ligne[10]) if len(ligne) > 10 else None
+        conseille = nombre(ligne[ID_LISTE]) if len(ligne) > ID_LISTE else None
         asin = (asin or "").strip()
         if not re.fullmatch(r"[A-Z0-9]{10}", asin):
             continue  # ignore l'en-tête ou les lignes vides
