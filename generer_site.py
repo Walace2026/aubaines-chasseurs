@@ -180,7 +180,7 @@ ONESIGNAL = (
     + ONESIGNAL_APP_ID + '"});});</script>'
 )
 
-NB_AUBAINES = 1000        # nombre de pages à générer (les meilleurs rabais)
+NB_AUBAINES = 1500        # nombre de pages à générer (les meilleurs rabais)
 FUSEAU = timezone(timedelta(hours=-4))  # heure de l'Est
 
 # strftime("%B") renvoie le mois en anglais : GitHub Actions tourne en locale C,
@@ -473,10 +473,22 @@ def lire_offres_eclair(exclure: set, jetons=None) -> list:
             "lien": f"https://www.amazon.ca/dp/{asin}?tag={TAG_AFFILIE}",
             "categorie": "Offre eclair",
             "fin": fin,
-            "image": f"https://images-na.ssl-images-amazon.com/images/P/{asin}.01._SCLZZZZZZZ_.jpg",
+            # Le vrai nom de fichier de l image, donne par Keepa.
+            #
+            # Il manquait, et la section en est morte. Sans lui il ne restait
+            # que l URL bricolee a partir de l ASIN, celle en /images/P/ : elle
+            # tient la route sur le gros du catalogue, mais presque jamais sur
+            # les offres eclair, souvent vendues par des tiers. Le 9 aout elle a
+            # fait ecarter 155 des 161 offres candidates faute de photo ; le
+            # lendemain, 13 sur 13, et la section a disparu du site sans une
+            # seule erreur dans le journal.
+            "img_keepa": d.get("image"),
         })
 
     offres.sort(key=lambda x: x["rabais"], reverse=True)
+    for o in offres:
+        o["urls_image"] = urls_image(o)
+        o["image"] = o["urls_image"][0]
     offres = garder_avec_photo(offres)[:ECLAIR_MAX]
     offres = appliquer_traductions(offres)
     print(f"  offres eclair : {len(offres)} retenues sur {len(brut)} annoncees par Keepa")
@@ -791,7 +803,9 @@ def lire_warehouse(exclure: set) -> list:
             "note": (d.get("warehouseConditionComment") or "").strip(),
             "lien": f"https://www.amazon.ca/dp/{asin}?tag={TAG_AFFILIE}",
             "categorie": CATEGORIES.get(str(d.get("rootCat") or ""), "Aubaines"),
-            "img_keepa": "",
+            # Meme correctif que pour les offres eclair : Keepa donne le nom
+            # de l image, autant s en servir plutot que de deviner l URL.
+            "img_keepa": d.get("image"),
         })
 
     lots.sort(key=lambda x: x["rabais"], reverse=True)
@@ -1064,15 +1078,29 @@ def lire_aubaines() -> list:
 _NOM_IMAGE = re.compile(r"^[A-Za-z0-9_+-]{6,80}\.(?:jpg|jpeg|png)$", re.IGNORECASE)
 
 
-def nom_image_keepa(brut: str):
+def nom_image_keepa(brut):
     """Nom de fichier de l image, tel que Keepa le renvoie.
 
-    Keepa transporte ce nom sous forme de tableau d octets. Le scenario Make
-    l ecrit donc dans la feuille en codes decimaux separes par des tirets
-    (« 52-49-117-... »). On le rend ici a sa forme lisible, « 41uvDx3VrcL.jpg ».
-    Une valeur deja lisible est acceptee telle quelle, et tout ce qui ne
-    ressemble pas a un nom de fichier est ignore sans bruit.
+    Keepa transporte ce nom sous forme de tableau d octets, et il nous parvient
+    sous trois formes selon le chemin emprunte :
+
+      - une vraie liste d entiers, quand ce script interroge Keepa directement
+        (/deal, /lightningdeal) ;
+      - la meme liste ecrite en codes decimaux separes par des tirets
+        (« 52-49-117-... »), forme que le scenario Make depose dans la feuille ;
+      - le nom de fichier deja lisible, « 41uvDx3VrcL.jpg ».
+
+    Les trois sont acceptees ; tout ce qui ne ressemble pas a un nom de fichier
+    est ignore sans bruit.
     """
+    if isinstance(brut, (bytes, bytearray)):
+        brut = brut.decode("ascii", "ignore")
+    elif isinstance(brut, (list, tuple)):
+        # Keepa ecrit des octets signes a la mode Java : -84 vaut 172.
+        try:
+            brut = bytes(int(o) & 0xFF for o in brut).decode("ascii", "ignore")
+        except (TypeError, ValueError):
+            return None
     brut = (brut or "").strip()
     if not brut:
         return None
