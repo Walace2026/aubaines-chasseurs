@@ -17,6 +17,7 @@ permissions:
   contents: write
   pages: write
   id-token: write
+  actions: write            # requis par l'etape keepalive
 
 concurrency:
   group: pages
@@ -27,6 +28,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Keepalive - empeche la desactivation auto apres 60 jours
+        uses: gautamkrishnar/keepalive-workflow@v2
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
