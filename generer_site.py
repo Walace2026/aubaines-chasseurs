@@ -144,6 +144,7 @@ EPOQUE_KEEPA = 21564000           # minutes Keepa -> minutes Unix
 DOMAINE = "https://aubaines.chasseursdedealsqc.com"
 PAGE_FACEBOOK = "https://www.facebook.com/ChasseursDeDealsQc"
 SITE_PRINCIPAL = "https://www.chasseursdedealsqc.com"
+COURRIEL_CONTACT = "info@chasseursdedealsqc.com"
 
 # Infolettre : webhook Make qui ajoute l'abonné à la liste Brevo.
 INFOLETTRE_HOOK = "https://hook.us2.make.com/jc2sk18m25gcbykk8xf6fa7aokeudccy"
@@ -1267,7 +1268,7 @@ Les meilleurs deals chaque jour → notre page Facebook</a>
 {formulaire_infolettre("aubaines", compact=True)}
 </main>
 <footer>Mis à jour le {e(maj_iso)} · <a href="{e(SITE_PRINCIPAL)}">chasseursdedealsqc.com</a>
-· <a href="{e(PAGE_FACEBOOK)}">Facebook</a> · <a href="/divulgation.html">Divulgation d'affiliation</a><br>En tant que Partenaire Amazon, je réalise un bénéfice sur les achats remplissant les conditions requises.</footer>
+· <a href="{e(PAGE_FACEBOOK)}">Facebook</a> · <a href="/divulgation.html">Divulgation d'affiliation</a> · <a href="/a-propos.html">À propos</a> · <a href="/confidentialite.html">Confidentialité</a> · <a href="/contact.html">Contact</a><br>En tant que Partenaire Amazon, je réalise un bénéfice sur les achats remplissant les conditions requises.</footer>
 </body></html>"""
 
 
@@ -1472,7 +1473,7 @@ def page_warehouse(lots, maj_lisible) -> str:
 {formulaire_infolettre("aubaines")}
 </main>
 <footer>Mis à jour le {e(maj_lisible)} · <a href="{e(SITE_PRINCIPAL)}">chasseursdedealsqc.com</a>
-· <a href="{e(PAGE_FACEBOOK)}">Facebook</a> · <a href="/divulgation.html">Divulgation d'affiliation</a><br>En tant que Partenaire Amazon, je réalise un bénéfice sur les achats remplissant les conditions requises.</footer>
+· <a href="{e(PAGE_FACEBOOK)}">Facebook</a> · <a href="/divulgation.html">Divulgation d'affiliation</a> · <a href="/a-propos.html">À propos</a> · <a href="/confidentialite.html">Confidentialité</a> · <a href="/contact.html">Contact</a><br>En tant que Partenaire Amazon, je réalise un bénéfice sur les achats remplissant les conditions requises.</footer>
 </body></html>"""
 
 
@@ -1587,7 +1588,7 @@ def page_categorie(nom, slug, items, maj_lisible) -> str:
 {formulaire_infolettre("aubaines")}
 </main>
 <footer>Mis à jour le {e(maj_lisible)} · <a href="{e(SITE_PRINCIPAL)}">chasseursdedealsqc.com</a>
-· <a href="{e(PAGE_FACEBOOK)}">Facebook</a> · <a href="/divulgation.html">Divulgation d'affiliation</a><br>En tant que Partenaire Amazon, je réalise un bénéfice sur les achats remplissant les conditions requises.</footer>
+· <a href="{e(PAGE_FACEBOOK)}">Facebook</a> · <a href="/divulgation.html">Divulgation d'affiliation</a> · <a href="/a-propos.html">À propos</a> · <a href="/confidentialite.html">Confidentialité</a> · <a href="/contact.html">Contact</a><br>En tant que Partenaire Amazon, je réalise un bénéfice sur les achats remplissant les conditions requises.</footer>
 </body></html>"""
 
 
@@ -1635,7 +1636,7 @@ Clique une aubaine pour la voir — et suis notre
 {formulaire_infolettre("aubaines")}
 </main>
 <footer>Mis à jour le {e(maj_lisible)} · <a href="{e(SITE_PRINCIPAL)}">chasseursdedealsqc.com</a>
-· <a href="{e(PAGE_FACEBOOK)}">Facebook</a> · <a href="/divulgation.html">Divulgation d'affiliation</a><br>En tant que Partenaire Amazon, je réalise un bénéfice sur les achats remplissant les conditions requises.</footer>
+· <a href="{e(PAGE_FACEBOOK)}">Facebook</a> · <a href="/divulgation.html">Divulgation d'affiliation</a> · <a href="/a-propos.html">À propos</a> · <a href="/confidentialite.html">Confidentialité</a> · <a href="/contact.html">Contact</a><br>En tant que Partenaire Amazon, je réalise un bénéfice sur les achats remplissant les conditions requises.</footer>
 </body></html>"""
 
 
@@ -1648,6 +1649,8 @@ def sitemap(aubaines, maj_iso, archives=None) -> str:
         urls.append(f"<url><loc>{DOMAINE}/aubaine/{a['slug']}.html</loc>"
                     f"<lastmod>{maj_iso}</lastmod><changefreq>daily</changefreq></url>")
     urls.append(f"<url><loc>{DOMAINE}/divulgation.html</loc><changefreq>monthly</changefreq><priority>0.3</priority></url>")
+    for p in ("a-propos.html", "confidentialite.html", "contact.html"):
+        urls.append(f"<url><loc>{DOMAINE}/{p}</loc><changefreq>monthly</changefreq><priority>0.3</priority></url>")
     vivants = {a["slug"] for a in aubaines}
     for slug, ent in (archives or {}).items():
         if slug in vivants:
@@ -1981,7 +1984,7 @@ Dernière fois en rabais le {e(str(ent.get('dernier', '')))}.</p>
 {cartes_html(connexes)}
 </main>
 <footer>Mis à jour le {e(maj_lisible)} · <a href="{e(SITE_PRINCIPAL)}">chasseursdedealsqc.com</a>
-· <a href="{e(PAGE_FACEBOOK)}">Facebook</a> · <a href="/divulgation.html">Divulgation d'affiliation</a><br>En tant que Partenaire Amazon, je réalise un bénéfice sur les achats remplissant les conditions requises.</footer>
+· <a href="{e(PAGE_FACEBOOK)}">Facebook</a> · <a href="/divulgation.html">Divulgation d'affiliation</a> · <a href="/a-propos.html">À propos</a> · <a href="/confidentialite.html">Confidentialité</a> · <a href="/contact.html">Contact</a><br>En tant que Partenaire Amazon, je réalise un bénéfice sur les achats remplissant les conditions requises.</footer>
 </body></html>"""
 
 
@@ -2051,8 +2054,83 @@ def page_divulgation(maj_lisible: str) -> str:
 </section>
 </main>
 <footer>Mis à jour le {e(maj_lisible)} · <a href="{e(SITE_PRINCIPAL)}">chasseursdedealsqc.com</a>
-· <a href="{e(PAGE_FACEBOOK)}">Facebook</a> · <a href="/divulgation.html">Divulgation d'affiliation</a><br>En tant que Partenaire Amazon, je réalise un bénéfice sur les achats remplissant les conditions requises.</footer>
+· <a href="{e(PAGE_FACEBOOK)}">Facebook</a> · <a href="/divulgation.html">Divulgation d'affiliation</a> · <a href="/a-propos.html">À propos</a> · <a href="/confidentialite.html">Confidentialité</a> · <a href="/contact.html">Contact</a><br>En tant que Partenaire Amazon, je réalise un bénéfice sur les achats remplissant les conditions requises.</footer>
 </body></html>"""
+
+
+
+
+def _page_statique(titre: str, fichier: str, desc: str, corps: str, maj_lisible: str) -> str:
+    """Gabarit commun des pages statiques (À propos, Confidentialité, Contact)."""
+    return f"""<!doctype html>
+<html lang="fr-CA">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{e(titre)} — Chasseurs de Deals Québec</title>
+<meta name="description" content="{e(desc)}">
+<link rel="canonical" href="{e(DOMAINE)}/{fichier}">
+<meta name="robots" content="index,follow">
+<style>{CSS}</style>
+{GOOGLE_VERIF}
+</head>
+<body>
+<header><a class="logo" href="/">🔥 Chasseurs de Deals Québec</a>
+<a class="fb" href="{e(PAGE_FACEBOOK)}" rel="noopener">Suivre la page Facebook</a></header>
+<main>
+<section class="intro">
+{corps}
+</section>
+</main>
+<footer>Mis à jour le {e(maj_lisible)} · <a href="{e(SITE_PRINCIPAL)}">chasseursdedealsqc.com</a>
+· <a href="{e(PAGE_FACEBOOK)}">Facebook</a> · <a href="/divulgation.html">Divulgation d\'affiliation</a> · <a href="/a-propos.html">À propos</a> · <a href="/confidentialite.html">Confidentialité</a> · <a href="/contact.html">Contact</a><br>En tant que Partenaire Amazon, je réalise un bénéfice sur les achats remplissant les conditions requises.</footer>
+</body></html>"""
+
+
+def page_apropos(maj_lisible: str) -> str:
+    corps = f"""<h1>À propos de Chasseurs de Deals Québec</h1>
+<p>Chasseurs de Deals Québec est un projet d\'ici, pensé pour les Québécois : repérer chaque jour les meilleures aubaines sur Amazon.ca et les présenter en français, sans fla-fla.</p>
+<h2>Comment on trouve les aubaines</h2>
+<p>Notre plateforme surveille en continu les baisses de prix sur Amazon.ca. Chaque aubaine affichée passe des filtres de qualité stricts : un rabais réel d\'au moins 15&nbsp;%, des produits populaires et bien notés par les acheteurs. Le site est régénéré trois fois par jour — matin, midi et fin d\'après-midi — pour attraper les offres éclair avant qu\'elles disparaissent.</p>
+<h2>Comment le site se finance</h2>
+<p>Le site participe au Programme Partenaires d\'Amazon.ca : quand tu achètes après avoir cliqué sur une aubaine, Amazon nous verse une petite commission, sans que ça change ton prix. Les détails sont dans notre <a href="/divulgation.html">divulgation d\'affiliation</a>. Aucun marchand ne paie pour apparaître ici : les aubaines sont classées par pourcentage de rabais, point.</p>
+<h2>Nous joindre</h2>
+<p>Écris-nous à <a href="mailto:{e(COURRIEL_CONTACT)}">{e(COURRIEL_CONTACT)}</a> ou sur notre <a href="{e(PAGE_FACEBOOK)}" rel="noopener">page Facebook</a>.</p>"""
+    desc = ("Qui est derrière Chasseurs de Deals Québec : un projet québécois qui repère "
+            "chaque jour les meilleures aubaines Amazon.ca, en français.")
+    return _page_statique("À propos", "a-propos.html", desc, corps, maj_lisible)
+
+
+def page_confidentialite(maj_lisible: str) -> str:
+    corps = f"""<h1>Politique de confidentialité</h1>
+<p>Cette politique explique quels renseignements personnels Chasseurs de Deals Québec recueille et comment ils sont utilisés, conformément à la Loi 25 (Loi modernisant des dispositions législatives en matière de protection des renseignements personnels, Québec).</p>
+<h2>Ce que nous recueillons</h2>
+<p><strong>Adresse courriel (infolettre).</strong> Si tu t\'abonnes à l\'infolettre, ton adresse courriel est recueillie avec ton consentement et utilisée uniquement pour t\'envoyer les aubaines du jour. Elle est conservée chez notre fournisseur d\'envoi de courriels et n\'est jamais vendue ni partagée à d\'autres fins. Chaque courriel contient un lien de désabonnement en un clic, qui retire ton adresse de la liste.</p>
+<p><strong>Notifications push.</strong> Si tu acceptes les notifications, ton navigateur génère un identifiant technique géré par notre fournisseur de notifications (OneSignal). Tu peux les désactiver à tout moment dans les réglages de ton navigateur.</p>
+<p><strong>Données de navigation.</strong> Le site est un site statique&nbsp;: nous ne créons pas de compte et ne recueillons pas de profil. L\'hébergeur peut conserver des journaux techniques standards (adresse IP, pages consultées) et nous mesurons de façon agrégée les visites et les clics pour savoir quelles aubaines intéressent le monde.</p>
+<p><strong>Liens vers Amazon.</strong> Quand tu cliques sur une aubaine, tu quittes notre site pour Amazon.ca, qui applique alors sa propre politique de confidentialité, incluant ses témoins (cookies) d\'affiliation.</p>
+<h2>Tes droits</h2>
+<p>Tu peux demander l\'accès aux renseignements que nous détenons sur toi, leur rectification ou leur suppression, ou retirer ton consentement en tout temps. Écris-nous et nous répondrons dans les meilleurs délais.</p>
+<h2>Responsable de la protection des renseignements personnels</h2>
+<p>Pour toute question ou demande relative à tes renseignements personnels&nbsp;: <a href="mailto:{e(COURRIEL_CONTACT)}">{e(COURRIEL_CONTACT)}</a>.</p>
+<p>Cette politique peut être mise à jour; la date de dernière mise à jour du site apparaît au bas de chaque page.</p>"""
+    desc = ("Politique de confidentialité de Chasseurs de Deals Québec : quels renseignements "
+            "sont recueillis (infolettre, notifications) et tes droits selon la Loi 25.")
+    return _page_statique("Politique de confidentialité", "confidentialite.html", desc, corps, maj_lisible)
+
+
+def page_contact(maj_lisible: str) -> str:
+    corps = f"""<h1>Nous joindre</h1>
+<p>Une question, une suggestion d\'aubaine, un problème avec un lien, ou une proposition de partenariat&nbsp;? On répond vite.</p>
+<h2>Par courriel</h2>
+<p><a href="mailto:{e(COURRIEL_CONTACT)}">{e(COURRIEL_CONTACT)}</a></p>
+<h2>Sur Facebook</h2>
+<p>Écris-nous sur notre <a href="{e(PAGE_FACEBOOK)}" rel="noopener">page Facebook</a> — c\'est aussi là que les aubaines du jour sont publiées et commentées.</p>
+<h2>Une aubaine expirée ?</h2>
+<p>Les prix Amazon changent vite. Si une aubaine affichée n\'est plus au prix indiqué, c\'est que l\'offre est terminée — le site se met à jour trois fois par jour pour limiter ça. Signale-nous les liens brisés, ça nous aide à garder le site propre.</p>"""
+    desc = ("Contacter Chasseurs de Deals Québec : par courriel à info@chasseursdedealsqc.com "
+            "ou via la page Facebook.")
+    return _page_statique("Contact", "contact.html", desc, corps, maj_lisible)
 
 
 def main() -> int:
@@ -2106,6 +2184,9 @@ def main() -> int:
 
     (SORTIE / "index.html").write_text(page_index(aubaines, maj_iso, maj_lisible, eclairs, rouges, mention_rouge, entrepot), encoding="utf-8")
     (SORTIE / "divulgation.html").write_text(page_divulgation(maj_lisible), encoding="utf-8")
+    (SORTIE / "a-propos.html").write_text(page_apropos(maj_lisible), encoding="utf-8")
+    (SORTIE / "confidentialite.html").write_text(page_confidentialite(maj_lisible), encoding="utf-8")
+    (SORTIE / "contact.html").write_text(page_contact(maj_lisible), encoding="utf-8")
     (SORTIE / "categorie" / f"{WH_SLUG}.html").write_text(
         page_warehouse(entrepot, maj_lisible), encoding="utf-8")
     jour = datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d")
