@@ -29,7 +29,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Keepalive - empeche la desactivation auto apres 60 jours
-        uses: gautamkrishnar/keepalive-workflow@v2
+        run: gh api -X PUT repos/${{ github.repository }}/actions/workflows/site.yml/enable
+        env:
+          GH_TOKEN: ${{ github.token }}
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
